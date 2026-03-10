@@ -2,7 +2,7 @@ import asyncio
 import logging
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -237,10 +237,11 @@ async def _ingest_file_background_with_status(
 @router.post(
     "/models/{slug}/sources",
     response_model=list[CreateSourceResponse],
-    status_code=202,
+    status_code=200,
 )
 async def create_source(
     body: CreateSourceRequest,
+    response: Response,
     model: RagModel = Depends(require_model_auth),
     session: AsyncSession = Depends(get_session),
 ):
@@ -271,6 +272,7 @@ async def create_source(
             content_type=body.content_type,
             source_url=body.source_url,
         )
+        response.status_code = 200
         return [CreateSourceResponse(
             source_identifier=body.source_identifier,
             status="complete",
@@ -279,9 +281,9 @@ async def create_source(
             message="Content unchanged, skipped re-ingestion" if result.skipped else f"Ingested {result.chunk_count} chunks",
         )]
 
-    # Normalise single url into a list
+    # Normalise single url into a list; source_identifier only applies to single url
     urls = body.urls if has_urls else [body.url]
-    source_ids = [body.source_identifier or url for url in urls]
+    source_ids = [url for url in urls] if has_urls else [body.source_identifier or body.url]
 
     # Single query to find all existing sources
     existing_result = await session.execute(
@@ -329,6 +331,7 @@ async def create_source(
             )
         )
 
+    response.status_code = 202
     return results
 
 
@@ -377,6 +380,9 @@ async def upload_source(
     session: AsyncSession = Depends(get_session),
 ):
     """Upload one or more files to ingest. Supports .txt, .md, .html, .pdf files. Returns 202."""
+    # Option A semantics: validate/extract all files first so 202 means every file
+    # in this request was accepted for background processing.
+    prepared_files: list[tuple[str, str, str]] = []
     results = []
 
     for file in files:
@@ -385,11 +391,13 @@ async def upload_source(
 
         raw = await file.read()
         text, content_type = _extract_text(file.filename, raw)
+        prepared_files.append((file.filename, text, content_type))
 
+    for filename, text, content_type in prepared_files:
         src_result = await session.execute(
             select(IngestionSource).where(
                 IngestionSource.model_id == model.id,
-                IngestionSource.source_identifier == file.filename,
+                IngestionSource.source_identifier == filename,
             )
         )
         existing = src_result.scalar_one_or_none()
@@ -398,29 +406,31 @@ async def upload_source(
         else:
             pending_source = IngestionSource(
                 model_id=model.id,
-                source_identifier=file.filename,
+                source_identifier=filename,
                 content_hash="",
                 chunk_count=0,
-                source_url=file.filename,
+                source_url=filename,
                 content_type=content_type,
                 status="pending",
             )
             session.add(pending_source)
 
+        results.append(CreateSourceResponse(
+            source_identifier=filename,
+            status="pending",
+            message=f"Ingestion started for {filename}",
+        ))
+
+    await session.commit()
+
+    for filename, text, content_type in prepared_files:
         asyncio.create_task(
             _ingest_file_background_with_status(
                 model_id=model.id,
                 text=text,
-                source_identifier=file.filename,
+                source_identifier=filename,
                 content_type=content_type,
             )
         )
 
-        results.append(CreateSourceResponse(
-            source_identifier=file.filename,
-            status="pending",
-            message=f"Ingestion started for {file.filename}",
-        ))
-
-    await session.commit()
     return results

@@ -25,6 +25,8 @@ async def create_model(body: RagModelCreate, session: AsyncSession = Depends(get
         name=body.name,
         slug=body.slug,
         description=body.description,
+        greeting=body.greeting,
+        placeholder=body.placeholder,
         system_prompt=body.system_prompt,
         chunk_size=body.chunk_size if body.chunk_size is not None else settings.default_chunk_size,
         chunk_overlap=body.chunk_overlap if body.chunk_overlap is not None else settings.default_chunk_overlap,
@@ -32,7 +34,10 @@ async def create_model(body: RagModelCreate, session: AsyncSession = Depends(get
         top_k=body.top_k if body.top_k is not None else settings.default_top_k,
         embedding_model=body.embedding_model or settings.default_embedding_model,
         generation_model=body.generation_model or settings.default_generation_model,
+        reranker_enabled=body.reranker_enabled if body.reranker_enabled is not None else False,
+        rerank_model=body.rerank_model or settings.default_rerank_model,
         public_access=body.public_access if body.public_access is not None else True,
+        allowed_origins=body.allowed_origins if body.allowed_origins is not None else [],
         budget_limit=body.budget_limit if body.budget_limit is not None else settings.default_budget_limit,
     )
     session.add(model)
