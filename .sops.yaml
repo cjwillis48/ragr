@@ -1,0 +1,4 @@
+creation_rules:
+  - path_regex: k8s/secrets/.*\.sops\.yml$
+    age: >-
+      age19pulnwtzah3x4xfp8rsajr7vzddct6lljeurfgu3pc7t9v3cy4gq6xe297

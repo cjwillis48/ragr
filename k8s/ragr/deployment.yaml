@@ -1,0 +1,74 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ragr
+  namespace: ragr
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ragr
+  template:
+    metadata:
+      labels:
+        app: ragr
+    spec:
+      imagePullSecrets:
+        - name: ghcr-pull-secret
+      initContainers:
+        - name: migrate
+          image: ghcr.io/cjwillis48/ragr:latest
+          imagePullPolicy: Always
+          command: ["alembic", "upgrade", "head"]
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: ragr-secrets
+                  key: DATABASE_URL
+      containers:
+        - name: ragr
+          image: ghcr.io/cjwillis48/ragr:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: ragr-secrets
+                  key: DATABASE_URL
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ragr-secrets
+                  key: ANTHROPIC_API_KEY
+            - name: VOYAGE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ragr-secrets
+                  key: VOYAGE_API_KEY
+            - name: RAGR_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ragr-secrets
+                  key: RAGR_API_KEY
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              memory: 128Mi
+              cpu: 100m
+            limits:
+              memory: 256Mi
+              cpu: 500m

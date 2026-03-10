@@ -1,0 +1,28 @@
+from datetime import datetime
+
+from pgvector.sqlalchemy import Vector
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.models.base import Base
+
+
+class ContentChunk(Base):
+    __tablename__ = "content_chunks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    model_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("rag_models.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding = mapped_column(Vector(1024), nullable=False)  # voyage-4-lite dimension
+    source_url: Mapped[str] = mapped_column(String, nullable=False)
+    source_identifier: Mapped[str] = mapped_column(String, nullable=False, default="")
+    content_type: Mapped[str] = mapped_column(String, nullable=False)
+    ingested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
+
+    rag_model = relationship("RagModel", back_populates="chunks")
