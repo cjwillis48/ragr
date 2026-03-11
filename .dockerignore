@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Environment
+.env
+.env.example
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.idea/
+.vscode/
+
+# Claude
+.claude/
+.claudeignore
+
+# Postman
+.postman/
+postman/
+ragr.postman_collection.json
+
+# K8s
+k8s/
+
+# Scripts (not needed at runtime)
+scripts/
+
+# Demo content
+demo/
+
+# Docs
+*.md
+
+# Misc
+.DS_Store
+.sops.yaml
+.python-version
+docker-compose.yaml
+Dockerfile
+Makefile

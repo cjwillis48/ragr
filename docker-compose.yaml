@@ -1,0 +1,41 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: ragr
+      POSTGRES_PASSWORD: ragr
+      POSTGRES_DB: ragr
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ragr"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  ragr:
+    build: .
+    profiles:
+      - app
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://ragr:ragr@postgres:5432/ragr
+    ports:
+      - "8000:8000"
+    depends_on:
+      - postgres
+
+  pgweb:
+    image: sosedoff/pgweb
+    environment:
+      PGWEB_DATABASE_URL: postgres://ragr:ragr@postgres:5432/ragr?sslmode=disable
+    ports:
+      - "8081:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:

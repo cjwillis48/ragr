@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.python-version
+
+# Environment
+.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+
+# Claude
+.claude/
+.claudeignore
+
+# Postman
+.postman/
+postman/
+ragr.postman_collection.json
+
+# K8s secrets
+k8s/secrets/
+
+# Plan files
+DEMO_PLAN.md
+BLOG_PLAN.md
+CLAUDEPLAN.md
+PARKING_LOT.md
+CODE_REVIEW.md
+
+# Files that will be used in demo
+demo/
+scripts/
