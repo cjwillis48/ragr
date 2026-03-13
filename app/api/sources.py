@@ -3,6 +3,10 @@ import logging
 
 import httpx
 import pymupdf  # noqa: F401 — eager import to avoid cold-start delay
+
+# Limit concurrent background ingestion tasks to avoid exhausting the DB
+# connection pool (default QueuePool size=5, overflow=10).
+_ingest_semaphore = asyncio.Semaphore(3)
 from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -596,24 +600,27 @@ async def _ingest_r2_file_background(
     """Download file from R2, extract text, ingest, then delete from R2."""
     from app.services.r2 import download_object, delete_object
 
-    async with async_session() as session:
-        result = await session.execute(select(RagModel).where(RagModel.id == model_id))
-        model = result.scalar_one()
-
+    async with _ingest_semaphore:
         try:
+            # Download and extract text WITHOUT holding a DB connection.
             raw = await asyncio.get_event_loop().run_in_executor(
                 None, download_object, object_key
             )
             text, content_type = _extract_text(filename, raw)
 
-            await ingest_content(
-                session=session,
-                model=model,
-                content=text,
-                source_identifier=filename,
-                content_type=content_type,
-                source_url=filename,
-            )
+            # Now open a session only for the DB-bound ingestion work.
+            async with async_session() as session:
+                result = await session.execute(select(RagModel).where(RagModel.id == model_id))
+                model = result.scalar_one()
+
+                await ingest_content(
+                    session=session,
+                    model=model,
+                    content=text,
+                    source_identifier=filename,
+                    content_type=content_type,
+                    source_url=filename,
+                )
             logger.info("R2 file %s: ingested successfully", filename)
         except Exception:
             logger.exception("R2 file ingestion failed for %s", filename)
