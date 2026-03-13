@@ -17,7 +17,7 @@ spec:
         - name: ghcr-pull-secret
       initContainers:
         - name: migrate
-          image: ghcr.io/cjwillis48/ragr:latest
+          image: ghcr.io/cjwillis48/ragr:main-c95d2f1
           command: ["alembic", "upgrade", "head"]
           env:
             - name: DATABASE_URL
@@ -27,7 +27,7 @@ spec:
                   key: DATABASE_URL
       containers:
         - name: ragr
-          image: ghcr.io/cjwillis48/ragr:latest
+          image: ghcr.io/cjwillis48/ragr:main-c95d2f1
           ports:
             - containerPort: 8000
           env:
