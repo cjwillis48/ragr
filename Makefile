@@ -24,11 +24,13 @@ seal-secret:
 	@test -n "$(OUT)" || (echo "Usage: make seal-secret IN=/tmp/plain.yml OUT=k8s/secrets/output.sealed.yaml" && exit 1)
 	kubeseal --format yaml --cert $(CERT) < $(IN) > $(OUT)
 
+# TODO: think this is broken AI slop
 seal-add:
 	@test -n "$(KEY)" || (echo "Usage: make seal-add KEY=MY_SECRET VALUE=hunter2" && exit 1)
 	@test -n "$(VALUE)" || (echo "Usage: make seal-add KEY=MY_SECRET VALUE=hunter2" && exit 1)
 	@ENCRYPTED=$$(printf '%s' "$(VALUE)" | kubeseal --raw --namespace $(NAMESPACE) --name ragr-secrets --controller-name sealed-secrets-controller --controller-namespace kube-system) && \
-	sed -i '' "s|^  encryptedData:|  encryptedData:\n    $(KEY): $$ENCRYPTED|" k8s/secrets/ragr-secrets.sealed.yaml && \
+	awk -v key="$(KEY)" -v val="$$ENCRYPTED" '/^  encryptedData:/{print; print "    " key ": " val; next}1' k8s/secrets/ragr-secrets.sealed.yaml > k8s/secrets/ragr-secrets.sealed.yaml.tmp && \
+	mv k8s/secrets/ragr-secrets.sealed.yaml.tmp k8s/secrets/ragr-secrets.sealed.yaml && \
 	echo "Sealed $(KEY) into ragr-secrets"
 
 restart:
