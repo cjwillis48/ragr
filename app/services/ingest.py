@@ -1,5 +1,7 @@
+import asyncio
 import hashlib
 from dataclasses import dataclass
+from functools import partial
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -33,8 +35,11 @@ async def ingest_content(
     Idempotent: if the content hash matches the existing source, skip.
     If changed, delete old chunks and re-embed.
     """
-    hash_input = f"{content}:chunk_size={model.chunk_size}:chunk_overlap={model.chunk_overlap}"
-    content_hash = hashlib.sha256(hash_input.encode()).hexdigest()
+    def _compute_hash() -> str:
+        h = f"{content}:chunk_size={model.chunk_size}:chunk_overlap={model.chunk_overlap}"
+        return hashlib.sha256(h.encode()).hexdigest()
+
+    content_hash = await asyncio.get_event_loop().run_in_executor(None, _compute_hash)
 
     # Check for existing ingestion source
     result = await session.execute(
@@ -60,8 +65,10 @@ async def ingest_content(
             )
         )
 
-    # Chunk the content
-    chunks = chunk_text(content, model.chunk_size, model.chunk_overlap)
+    # Chunk the content (run in thread to avoid blocking the event loop)
+    chunks = await asyncio.get_event_loop().run_in_executor(
+        None, partial(chunk_text, content, model.chunk_size, model.chunk_overlap)
+    )
     if not chunks:
         return IngestResult(chunk_count=0, skipped=False, embedding_cost=0.0)
 

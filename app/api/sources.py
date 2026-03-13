@@ -2,6 +2,7 @@ import asyncio
 import logging
 
 import httpx
+import pymupdf  # noqa: F401 — eager import to avoid cold-start delay
 from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -418,19 +419,31 @@ async def upload_source(
     session: AsyncSession = Depends(get_session),
 ):
     """Upload one or more files to ingest. Supports .txt, .md, .html, .pdf files. Returns 202."""
-    # Option A semantics: validate/extract all files first so 202 means every file
-    # in this request was accepted for background processing.
+    import time
+
     prepared_files: list[tuple[str, str, str]] = []
     results = []
 
+    t0 = time.monotonic()
     for file in files:
         if not file.filename:
             raise HTTPException(status_code=400, detail="Filename is required for all files")
 
         raw = await file.read()
+        t_read = time.monotonic()
         text, content_type = _extract_text(file.filename, raw)
+        t_extract = time.monotonic()
+        logger.info(
+            "upload %s: read=%.1fms extract=%.1fms size=%dKB",
+            file.filename,
+            (t_read - t0) * 1000,
+            (t_extract - t_read) * 1000,
+            len(raw) // 1024,
+        )
         prepared_files.append((file.filename, text, content_type))
+        t0 = time.monotonic()
 
+    t_db = time.monotonic()
     for filename, text, content_type in prepared_files:
         src_result = await session.execute(
             select(IngestionSource).where(
@@ -460,6 +473,7 @@ async def upload_source(
         ))
 
     await session.commit()
+    logger.info("upload db upserts: %.1fms for %d files", (time.monotonic() - t_db) * 1000, len(prepared_files))
 
     for filename, text, content_type in prepared_files:
         asyncio.create_task(
