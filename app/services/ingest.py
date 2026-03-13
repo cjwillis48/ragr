@@ -93,6 +93,7 @@ async def ingest_content(
         content_type=content_type,
         status="complete",
         embedding_cost=embedding_cost,
+        raw_content=content,
     )
     stmt = stmt.on_conflict_do_update(
         constraint="uq_model_source",
@@ -103,6 +104,7 @@ async def ingest_content(
             "content_type": stmt.excluded.content_type,
             "status": stmt.excluded.status,
             "embedding_cost": stmt.excluded.embedding_cost,
+            "raw_content": stmt.excluded.raw_content,
         },
     )
     await session.execute(stmt)
