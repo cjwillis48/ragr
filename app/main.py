@@ -47,7 +47,9 @@ async def lifespan(app: FastAPI):
     await engine.dispose()
 
 
-app = FastAPI(title="RAGr", version="0.1.0", lifespan=lifespan)
+from app import __version__
+
+app = FastAPI(title="RAGr", version=__version__, lifespan=lifespan)
 
 app.add_middleware(RequestIdMiddleware)
 
