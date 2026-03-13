@@ -11,6 +11,10 @@ class Settings(BaseSettings):
 
     ragr_api_key: str = ""
 
+    clerk_secret_key: str = ""
+    superuser_id: str = ""
+    console_origins: list[str] = ["http://localhost:5173"]
+
     rate_limit_per_min: int = 10
 
     default_similarity_threshold: float = 0.5

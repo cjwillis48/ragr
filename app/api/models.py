@@ -5,7 +5,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.cors import sync_origins
 from app.database import get_session
-from app.dependencies import get_active_model_by_slug, get_model_by_slug, require_api_key
+from app.dependencies import (
+    ClerkUser,
+    get_active_model_by_slug,
+    get_model_by_slug,
+    require_api_key,
+)
 from app.models.rag_model import RagModel
 from app.schemas.models import RagModelCreate, RagModelPublic, RagModelRead, RagModelUpdate
 from app.services.budget import check_budget
@@ -13,15 +18,19 @@ from app.services.budget import check_budget
 router = APIRouter(prefix="/models", tags=["models"])
 
 
-@router.post("", response_model=RagModelRead, status_code=201, dependencies=[Depends(require_api_key)])
-async def create_model(body: RagModelCreate, session: AsyncSession = Depends(get_session)):
+@router.post("", response_model=RagModelRead, status_code=201)
+async def create_model(
+    body: RagModelCreate,
+    clerk_user: ClerkUser | None = Depends(require_api_key),
+    session: AsyncSession = Depends(get_session),
+):
     """Create a new RAG model."""
-    # Check slug uniqueness
     existing = await session.execute(select(RagModel).where(RagModel.slug == body.slug))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Model with this slug already exists")
 
     model = RagModel(
+        owner_id=clerk_user.user_id if clerk_user else None,
         name=body.name,
         slug=body.slug,
         description=body.description,
@@ -36,7 +45,8 @@ async def create_model(body: RagModelCreate, session: AsyncSession = Depends(get
         generation_model=body.generation_model or settings.default_generation_model,
         reranker_enabled=body.reranker_enabled if body.reranker_enabled is not None else False,
         rerank_model=body.rerank_model or settings.default_rerank_model,
-        public_access=body.public_access if body.public_access is not None else True,
+        history_turns=body.history_turns if body.history_turns is not None else 10,
+        hosted_chat=body.hosted_chat if body.hosted_chat is not None else True,
         allowed_origins=body.allowed_origins if body.allowed_origins is not None else [],
         budget_limit=body.budget_limit if body.budget_limit is not None else settings.default_budget_limit,
     )
@@ -48,10 +58,18 @@ async def create_model(body: RagModelCreate, session: AsyncSession = Depends(get
     return model
 
 
-@router.get("", response_model=list[RagModelRead], dependencies=[Depends(require_api_key)])
-async def list_models(session: AsyncSession = Depends(get_session)):
-    """List all RAG models."""
-    result = await session.execute(select(RagModel).order_by(RagModel.created_at))
+@router.get("", response_model=list[RagModelRead])
+async def list_models(
+    clerk_user: ClerkUser | None = Depends(require_api_key),
+    session: AsyncSession = Depends(get_session),
+):
+    """List all RAG models. Clerk users see only their own models."""
+    query = select(RagModel).order_by(RagModel.created_at)
+
+    if clerk_user and not clerk_user.is_superuser:
+        query = query.where(RagModel.owner_id == clerk_user.user_id)
+
+    result = await session.execute(query)
     return result.scalars().all()
 
 

@@ -18,7 +18,8 @@ class RagModelCreate(BaseModel):
     generation_model: str | None = None
     reranker_enabled: bool | None = None
     rerank_model: str | None = None
-    public_access: bool | None = None
+    history_turns: int | None = None
+    hosted_chat: bool | None = None
     allowed_origins: list[str] | None = None
     budget_limit: float | None = None
 
@@ -37,7 +38,8 @@ class RagModelUpdate(BaseModel):
     generation_model: str | None = None
     reranker_enabled: bool | None = None
     rerank_model: str | None = None
-    public_access: bool | None = None
+    history_turns: int | None = None
+    hosted_chat: bool | None = None
     allowed_origins: list[str] | None = None
     budget_limit: float | None = None
     is_active: bool | None = None
@@ -50,7 +52,7 @@ class RagModelPublic(BaseModel):
     greeting: str
     placeholder: str
     allowed_origins: list[str]
-    public_access: bool
+    hosted_chat: bool
     accepting_requests: bool = True
 
     model_config = {"from_attributes": True}
@@ -72,7 +74,8 @@ class RagModelRead(BaseModel):
     generation_model: str
     reranker_enabled: bool
     rerank_model: str
-    public_access: bool
+    history_turns: int
+    hosted_chat: bool
     allowed_origins: list[str]
     budget_limit: float
     is_active: bool

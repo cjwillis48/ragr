@@ -13,6 +13,7 @@ class ConversationLog(Base):
     model_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("rag_models.id", ondelete="CASCADE"), nullable=False, index=True
     )
+    session_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     question: Mapped[str] = mapped_column(Text, nullable=False)
     answer: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(20), default="answered")

@@ -22,6 +22,7 @@ class PurgeResponse(BaseModel):
 
 class ConversationResponse(BaseModel):
     id: int
+    session_id: str | None
     question: str
     answer: str
     status: str

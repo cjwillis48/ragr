@@ -13,6 +13,8 @@ from app.models.ingestion_source import IngestionSource
 from app.models.rag_model import RagModel
 from app.schemas.admin import PurgeResponse
 from app.schemas.sources import (
+    ChunkListResponse,
+    ChunkResponse,
     CreateSourceRequest,
     CreateSourceResponse,
     SourceListResponse,
@@ -66,6 +68,42 @@ async def get_source(
     if not source:
         raise HTTPException(status_code=404, detail="Source not found")
     return SourceResponse.model_validate(source)
+
+
+@router.get(
+    "/models/{slug}/sources/{source_id}/chunks",
+    response_model=ChunkListResponse,
+)
+async def list_source_chunks(
+    source_id: int,
+    model: RagModel = Depends(require_model_auth),
+    session: AsyncSession = Depends(get_session),
+):
+    """List all content chunks for a source. Useful for debugging ingestion."""
+    result = await session.execute(
+        select(IngestionSource).where(
+            IngestionSource.model_id == model.id,
+            IngestionSource.id == source_id,
+        )
+    )
+    source = result.scalar_one_or_none()
+    if not source:
+        raise HTTPException(status_code=404, detail="Source not found")
+
+    chunks_result = await session.execute(
+        select(ContentChunk)
+        .where(
+            ContentChunk.model_id == model.id,
+            ContentChunk.source_identifier == source.source_identifier,
+        )
+        .order_by(ContentChunk.id)
+    )
+    chunks = chunks_result.scalars().all()
+    return ChunkListResponse(
+        source_identifier=source.source_identifier,
+        chunks=[ChunkResponse.model_validate(c) for c in chunks],
+        total=len(chunks),
+    )
 
 
 @router.delete(
