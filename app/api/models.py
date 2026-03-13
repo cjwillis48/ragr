@@ -10,9 +10,10 @@ from app.dependencies import (
     get_active_model_by_slug,
     get_model_by_slug,
     require_api_key,
+    require_model_auth,
 )
 from app.models.rag_model import RagModel
-from app.schemas.models import RagModelCreate, RagModelPublic, RagModelRead, RagModelUpdate
+from app.schemas.models import ChatTheme, RagModelCreate, RagModelPublic, RagModelRead, RagModelUpdate
 from app.services.budget import check_budget
 
 router = APIRouter(prefix="/models", tags=["models"])
@@ -34,9 +35,8 @@ async def create_model(
         name=body.name,
         slug=body.slug,
         description=body.description,
-        greeting=body.greeting,
-        placeholder=body.placeholder,
         system_prompt=body.system_prompt,
+        chat_theme=body.chat_theme.model_dump(exclude_none=True) if body.chat_theme else None,
         chunk_size=body.chunk_size if body.chunk_size is not None else settings.default_chunk_size,
         chunk_overlap=body.chunk_overlap if body.chunk_overlap is not None else settings.default_chunk_overlap,
         similarity_threshold=body.similarity_threshold if body.similarity_threshold is not None else settings.default_similarity_threshold,
@@ -117,3 +117,23 @@ async def delete_model(
     await session.delete(model)
     await session.commit()
     await sync_origins(session)
+
+
+@router.get("/{slug}/theme", response_model=ChatTheme)
+async def get_theme(model: RagModel = Depends(get_active_model_by_slug)):
+    """Public endpoint — returns the chat widget theme for embedding."""
+    return ChatTheme(**(model.chat_theme or {}))
+
+
+@router.patch("/{slug}/theme", response_model=ChatTheme)
+async def update_theme(
+    body: ChatTheme,
+    model: RagModel = Depends(require_model_auth),
+    session: AsyncSession = Depends(get_session),
+):
+    """Update chat widget theme. Merges with existing theme — only sent fields are updated."""
+    merged = {**(model.chat_theme or {}), **body.model_dump(exclude_unset=True)}
+    model.chat_theme = merged
+    await session.commit()
+    await session.refresh(model)
+    return ChatTheme(**model.chat_theme)

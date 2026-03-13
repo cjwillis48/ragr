@@ -34,6 +34,7 @@ def _get_clerk():
 @dataclass
 class ClerkUser:
     user_id: str
+    email: str | None = None
 
     @property
     def is_superuser(self) -> bool:
@@ -68,6 +69,7 @@ async def _verify_clerk_token(request: Request) -> ClerkUser | None:
 
         return ClerkUser(
             user_id=payload.get("sub", ""),
+            email=payload.get("email"),
         )
     except Exception:
         logger.error("Clerk token verification failed", exc_info=True)

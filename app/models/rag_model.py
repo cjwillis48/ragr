@@ -15,9 +15,8 @@ class RagModel(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     slug: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
     description: Mapped[str] = mapped_column(Text, default="")
-    greeting: Mapped[str] = mapped_column(Text, default="")
-    placeholder: Mapped[str] = mapped_column(Text, default="")
     system_prompt: Mapped[str] = mapped_column(Text, default="")
+    chat_theme: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     chunk_size: Mapped[int] = mapped_column(Integer, default=1000)
     chunk_overlap: Mapped[int] = mapped_column(Integer, default=100)

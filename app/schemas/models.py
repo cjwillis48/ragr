@@ -3,13 +3,26 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 
+class ChatTheme(BaseModel):
+    label: str | None = None
+    greeting: str | None = None
+    placeholder: str | None = None
+    launcher_hint: str | None = None
+    primary_color: str | None = None
+    bg_color: str | None = None
+    text_color: str | None = None
+    user_bubble_color: str | None = None
+    bot_bubble_color: str | None = None
+    font_family: str | None = None
+    border_radius: int | None = None
+
+
 class RagModelCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     slug: str = Field(..., min_length=1, max_length=255, pattern=r"^[a-z0-9][a-z0-9-]*$")
     description: str = ""
-    greeting: str = ""
-    placeholder: str = ""
     system_prompt: str = ""
+    chat_theme: ChatTheme | None = None
     chunk_size: int | None = None
     chunk_overlap: int | None = None
     similarity_threshold: float | None = None
@@ -27,8 +40,6 @@ class RagModelCreate(BaseModel):
 class RagModelUpdate(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=255)
     description: str | None = None
-    greeting: str | None = None
-    placeholder: str | None = None
     system_prompt: str | None = None
     chunk_size: int | None = None
     chunk_overlap: int | None = None
@@ -49,8 +60,7 @@ class RagModelPublic(BaseModel):
     name: str
     slug: str
     description: str
-    greeting: str
-    placeholder: str
+    chat_theme: ChatTheme | None = None
     allowed_origins: list[str]
     hosted_chat: bool
     accepting_requests: bool = True
@@ -63,9 +73,8 @@ class RagModelRead(BaseModel):
     name: str
     slug: str
     description: str
-    greeting: str
-    placeholder: str
     system_prompt: str
+    chat_theme: ChatTheme | None = None
     chunk_size: int
     chunk_overlap: int
     similarity_threshold: float

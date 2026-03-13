@@ -28,7 +28,18 @@ class ConversationResponse(BaseModel):
     status: str
     tokens_in: int
     tokens_out: int
+    retrieved_chunks: list[dict] | None = None
     created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ChunkResponse(BaseModel):
+    id: int
+    content: str
+    source_url: str
+    source_identifier: str
+    content_type: str
 
     model_config = {"from_attributes": True}
 

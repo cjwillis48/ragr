@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,7 +8,7 @@ from app.models.content import ContentChunk
 from app.models.conversation import ConversationLog
 from app.models.ingestion_source import IngestionSource
 from app.models.rag_model import RagModel
-from app.schemas.admin import ConversationListResponse, ConversationResponse, StatsResponse
+from app.schemas.admin import ChunkResponse, ConversationListResponse, ConversationResponse, StatsResponse
 from app.services.budget import get_current_month_usage
 
 router = APIRouter(tags=["admin"])
@@ -95,3 +95,30 @@ async def list_conversations(
         limit=limit,
         offset=offset,
     )
+
+
+@router.get(
+    "/models/{slug}/chunks",
+    response_model=list[ChunkResponse],
+)
+async def get_chunks(
+    model: RagModel = Depends(require_model_auth),
+    session: AsyncSession = Depends(get_session),
+    ids: str = Query(..., description="Comma-separated chunk IDs"),
+):
+    """Fetch chunks by ID for a model. Used to inspect retrieved context for a conversation."""
+    try:
+        chunk_ids = [int(i) for i in ids.split(",")]
+    except ValueError:
+        raise HTTPException(status_code=400, detail="ids must be comma-separated integers")
+
+    if len(chunk_ids) > 50:
+        raise HTTPException(status_code=400, detail="Maximum 50 chunk IDs per request")
+
+    result = await session.execute(
+        select(ContentChunk).where(
+            ContentChunk.model_id == model.id,
+            ContentChunk.id.in_(chunk_ids),
+        )
+    )
+    return result.scalars().all()
