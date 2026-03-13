@@ -1,27 +1,28 @@
-IMAGE := ghcr.io/cjwillis48/ragr:latest
+IMAGE := ghcr.io/cjwillis48/ragr
 NAMESPACE := ragr
+CERT := k8s/secrets/sealed-secrets-pub.pem
 
-.PHONY: build push build-push deploy restart logs status enter-pg enter-ragr secrets edit-secrets
+.PHONY: build push build-push deploy restart logs status enter-pg enter-ragr seal-secret
 
 build:
-	docker buildx build --platform linux/arm64 -t $(IMAGE) .
+	docker buildx build --platform linux/arm64 -t $(IMAGE):dev .
 
 push:
-	docker push $(IMAGE)
+	docker push $(IMAGE):dev
 
 build-push: build push
 
 deploy:
 	kubectl apply -f k8s/namespace.yaml
-	sops -d k8s/secrets/ragr-secrets.sops.yml | kubectl apply -f -
+	kubectl apply -f k8s/secrets/ragr-secrets.sealed.yaml
+	kubectl apply -f k8s/secrets/ghcr-pull-secret.sealed.yaml
 	kubectl apply -f k8s/postgres/
 	kubectl apply -f k8s/ragr/
 
-secrets:
-	sops -d k8s/secrets/ragr-secrets.sops.yml | kubectl apply -f -
-
-edit-secrets:
-	sops k8s/secrets/ragr-secrets.sops.yml
+seal-secret:
+	@test -n "$(IN)" || (echo "Usage: make seal-secret IN=/tmp/plain.yml OUT=k8s/secrets/output.sealed.yaml" && exit 1)
+	@test -n "$(OUT)" || (echo "Usage: make seal-secret IN=/tmp/plain.yml OUT=k8s/secrets/output.sealed.yaml" && exit 1)
+	kubeseal --format yaml --cert $(CERT) < $(IN) > $(OUT)
 
 restart:
 	kubectl rollout restart deployment/ragr -n $(NAMESPACE)
