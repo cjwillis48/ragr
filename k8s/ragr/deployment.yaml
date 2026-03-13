@@ -51,6 +51,18 @@ spec:
                 secretKeyRef:
                   name: ragr-secrets
                   key: RAGR_API_KEY
+            - name: ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ragr-secrets
+                  key: ENCRYPTION_KEY
+            - name: CLERK_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ragr-secrets
+                  key: CLERK_SECRET_KEY
+            - name: CONSOLE_ORIGINS
+              value: '["https://ragr.charliewillis.com"]'
           livenessProbe:
             httpGet:
               path: /healthz
