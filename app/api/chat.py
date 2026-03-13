@@ -1,11 +1,13 @@
 import json
 import logging
 import time
+import uuid
 
 import anthropic
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
@@ -21,6 +23,31 @@ router = APIRouter(tags=["chat"])
 logger = logging.getLogger("ragr.chat")
 
 
+async def _load_session_history(
+    session: AsyncSession,
+    model: RagModel,
+    session_id: str,
+) -> list[dict]:
+    """Load the last N conversation turns for a session from the DB."""
+    result = await session.execute(
+        select(ConversationLog)
+        .where(
+            ConversationLog.model_id == model.id,
+            ConversationLog.session_id == session_id,
+        )
+        .order_by(ConversationLog.created_at.desc())
+        .limit(model.history_turns)
+    )
+    rows = result.scalars().all()
+
+    # Reverse to chronological order and flatten to message pairs
+    history = []
+    for row in reversed(rows):
+        history.append({"role": "user", "content": row.question})
+        history.append({"role": "assistant", "content": row.answer})
+    return history
+
+
 async def _log_conversation(
     session: AsyncSession,
     model: RagModel,
@@ -29,11 +56,13 @@ async def _log_conversation(
     status: str,
     tokens_in: int,
     tokens_out: int,
+    session_id: str | None = None,
 ) -> None:
     """Record token usage and log the conversation."""
     await record_usage(session, model, tokens_in, tokens_out)
     session.add(ConversationLog(
         model_id=model.id,
+        session_id=session_id,
         question=question,
         answer=answer,
         status=status,
@@ -46,13 +75,15 @@ async def _log_conversation(
 @router.post("/models/{slug}/chat")
 async def chat(
     body: ChatRequest,
-    response: Response,
     model: RagModel = Depends(require_chat_auth),
     session: AsyncSession = Depends(get_session),
 ):
     """Query a model — public endpoint. Set stream: true for SSE."""
     if not await check_budget(session, model):
         raise HTTPException(status_code=429, detail="Model has exceeded its monthly budget")
+
+    # Resolve session ID
+    session_id = body.session_id or str(uuid.uuid4())
 
     t_req = time.perf_counter()
     try:
@@ -66,11 +97,18 @@ async def chat(
 
     rerank_cost = estimate_rerank_cost(model.rerank_model, retrieval.rerank_tokens) if retrieval.rerank_tokens else 0.0
     logger.info("pre_stream_ready %.0fms chunks=%d rerank_cost=$%.6f", (time.perf_counter() - t_req) * 1000, len(retrieval.chunks), rerank_cost)
-    history = [{"role": m.role, "content": m.content} for m in body.history] if body.history else None
+
+    # Build history: prefer server-side session history, fall back to client-provided
+    if body.session_id or not body.history:
+        history = await _load_session_history(session, model, session_id)
+    else:
+        history = [{"role": m.role, "content": m.content} for m in body.history]
+
+    history = history or None
 
     if body.stream:
         return StreamingResponse(
-            _stream_response(session, model, body.question, retrieval.chunks, history),
+            _stream_response(session, model, body.question, retrieval.chunks, history, session_id, rerank_cost),
             media_type="text/event-stream",
         )
 
@@ -80,18 +118,18 @@ async def chat(
         if e.status_code == 529:
             raise HTTPException(status_code=503, detail="AI provider is temporarily overloaded. Please try again.")
         raise
-    await _log_conversation(session, model, body.question, result.answer, result.status, result.input_tokens, result.output_tokens)
+    await _log_conversation(session, model, body.question, result.answer, result.status, result.input_tokens, result.output_tokens, session_id)
 
     generation_cost = estimate_cost(model.generation_model, result.input_tokens, result.output_tokens)
-    response.headers["RAGr-Generation-Cost"] = f"${generation_cost + rerank_cost:.6f}"
-    response.headers["RAGr-Generation-Model"] = model.generation_model
-    response.headers["RAGr-Embedding-Model"] = model.embedding_model
-    response.headers["RAGr-Reranker-Enabled"] = str(model.reranker_enabled).lower()
-    if model.reranker_enabled:
-        response.headers["RAGr-Rerank-Model"] = model.rerank_model
-    response.headers["RAGr-Chunks-Retrieved"] = str(len(retrieval.chunks))
 
-    return ChatResponse(answer=result.answer, status=result.status)
+    return ChatResponse(
+        answer=result.answer,
+        status=result.status,
+        session_id=session_id,
+        tokens_in=result.input_tokens,
+        tokens_out=result.output_tokens,
+        cost=f"${generation_cost + rerank_cost:.6f}",
+    )
 
 
 async def _stream_response(
@@ -100,13 +138,23 @@ async def _stream_response(
     question: str,
     chunks: list,
     history: list[dict] | None = None,
+    session_id: str | None = None,
+    rerank_cost: float = 0.0,
 ):
     """SSE generator. Streams text deltas, then a final done event with metadata."""
     try:
         async for event in generate_answer_stream(model, question, chunks, history=history):
             if isinstance(event, GenerationResult):
-                await _log_conversation(session, model, question, event.answer, event.status, event.input_tokens, event.output_tokens)
-                data = json.dumps({"answer": event.answer, "status": event.status})
+                await _log_conversation(session, model, question, event.answer, event.status, event.input_tokens, event.output_tokens, session_id)
+                generation_cost = estimate_cost(model.generation_model, event.input_tokens, event.output_tokens)
+                data = json.dumps({
+                    "answer": event.answer,
+                    "status": event.status,
+                    "session_id": session_id,
+                    "tokens_in": event.input_tokens,
+                    "tokens_out": event.output_tokens,
+                    "cost": f"${generation_cost + rerank_cost:.6f}",
+                })
                 yield f"event: done\ndata: {data}\n\n"
             else:
                 yield f"data: {json.dumps(event)}\n\n"

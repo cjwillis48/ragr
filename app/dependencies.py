@@ -1,7 +1,11 @@
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
 from typing import Optional
 
 import bcrypt
-from fastapi import Depends, Header, HTTPException
+from fastapi import Depends, Header, HTTPException, Request
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,14 +14,69 @@ from app.database import get_session
 from app.models.model_api_key import ModelApiKey
 from app.models.rag_model import RagModel
 
+logger = logging.getLogger("ragr.auth")
 
-async def require_api_key(authorization: str = Header(...)) -> None:
-    """Validate admin API key from Authorization: Bearer <key> header."""
-    if not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Invalid authorization header")
-    token = authorization.removeprefix("Bearer ")
-    if token != settings.ragr_api_key:
-        raise HTTPException(status_code=401, detail="Invalid API key")
+# ---------------------------------------------------------------------------
+# Clerk JWT verification (lazy-initialised)
+# ---------------------------------------------------------------------------
+
+_clerk_client = None
+
+
+def _get_clerk():
+    global _clerk_client
+    if _clerk_client is None and settings.clerk_secret_key:
+        from clerk_backend_api import Clerk
+        _clerk_client = Clerk(bearer_auth=settings.clerk_secret_key)
+    return _clerk_client
+
+
+@dataclass
+class ClerkUser:
+    user_id: str
+
+    @property
+    def is_superuser(self) -> bool:
+        return bool(settings.superuser_id and self.user_id == settings.superuser_id)
+
+
+def _extract_bearer(authorization: str | None) -> str | None:
+    """Extract token from 'Bearer <token>' header. Returns None if missing/malformed."""
+    if not authorization or not authorization.startswith("Bearer "):
+        return None
+    return authorization.removeprefix("Bearer ")
+
+
+async def _verify_clerk_token(request: Request) -> ClerkUser | None:
+    """Verify a Clerk session token. Returns ClerkUser or None if Clerk is not configured or token is invalid."""
+    clerk = _get_clerk()
+    if clerk is None:
+        return None
+
+    try:
+        from clerk_backend_api.security.types import AuthenticateRequestOptions
+        request_state = clerk.authenticate_request(
+            request,
+            AuthenticateRequestOptions(
+                authorized_parties=settings.console_origins,
+            ),
+        )
+        if not request_state.is_signed_in:
+            return None
+
+        payload = request_state.payload or {}
+
+        return ClerkUser(
+            user_id=payload.get("sub", ""),
+        )
+    except Exception:
+        logger.error("Clerk token verification failed", exc_info=True)
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Legacy API key helpers
+# ---------------------------------------------------------------------------
 
 
 async def _validate_model_key(session: AsyncSession, model: RagModel, token: str) -> bool:
@@ -40,6 +99,11 @@ async def _validate_model_key(session: AsyncSession, model: RagModel, token: str
         return True
 
     return False
+
+
+# ---------------------------------------------------------------------------
+# Model slug resolvers
+# ---------------------------------------------------------------------------
 
 
 async def get_model_by_slug(
@@ -68,22 +132,78 @@ async def get_active_model_by_slug(
     return model
 
 
+# ---------------------------------------------------------------------------
+# Auth dependencies
+# ---------------------------------------------------------------------------
+
+
+async def get_clerk_user(
+    request: Request,
+    authorization: Optional[str] = Header(None),
+) -> ClerkUser:
+    """Extract and verify Clerk JWT. Raises 401 if not authenticated."""
+    user = await _verify_clerk_token(request)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    return user
+
+
+async def require_api_key(
+    request: Request,
+    authorization: str = Header(...),
+) -> ClerkUser | None:
+    """Admin-level auth for model CRUD.
+
+    Accepts: Clerk JWT or legacy admin API key.
+    Returns ClerkUser if Clerk auth, None if legacy key.
+    """
+    clerk_user = await _verify_clerk_token(request)
+    if clerk_user is not None:
+        return clerk_user
+
+    token = _extract_bearer(authorization)
+    if token and token == settings.ragr_api_key:
+        return None
+
+    raise HTTPException(status_code=401, detail="Invalid API key")
+
+
 async def require_model_auth(
     slug: str,
+    request: Request,
     session: AsyncSession = Depends(get_session),
     authorization: str = Header(...),
 ) -> RagModel:
-    """Authenticate with admin key or per-model API key. Returns the resolved model.
+    """Authenticate with Clerk JWT, admin key, or per-model API key.
 
+    For Clerk auth, verifies the user owns the model.
     Use this for model-scoped endpoints (sources, stats, conversations, api-keys).
     """
     model = await get_model_by_slug(slug, session)
+    token = _extract_bearer(authorization)
 
-    if not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Invalid authorization header")
-    token = authorization.removeprefix("Bearer ")
+    # Try per-model API key first (ragr_ prefix)
+    if token and token.startswith("ragr_"):
+        if await _validate_model_key(session, model, token):
+            return model
+        raise HTTPException(status_code=401, detail="Invalid API key")
 
-    if await _validate_model_key(session, model, token):
+    # Try Clerk JWT
+    clerk_user = await _verify_clerk_token(request)
+    if clerk_user is not None:
+        # Model has no owner — any authenticated user can access (legacy models)
+        if model.owner_id is None:
+            return model
+        # Verify ownership
+        if model.owner_id == clerk_user.user_id:
+            return model
+        # Superuser gets read-only access to all models
+        if clerk_user.is_superuser and request.method in ("GET", "HEAD", "OPTIONS"):
+            return model
+        raise HTTPException(status_code=403, detail="You do not own this model")
+
+    # Fall back to legacy admin key
+    if token and token == settings.ragr_api_key:
         return model
 
     raise HTTPException(status_code=401, detail="Invalid API key")
@@ -91,27 +211,38 @@ async def require_model_auth(
 
 async def require_chat_auth(
     slug: str,
+    request: Request,
     session: AsyncSession = Depends(get_session),
     authorization: Optional[str] = Header(None),
 ) -> RagModel:
     """Authenticate for chat access.
 
-    - If the model has public_access=True, no auth is required.
-    - Otherwise, a valid admin key or per-model API key is required.
+    - If the model has hosted_chat=True, no auth is required.
+    - Otherwise, a valid Clerk JWT, admin key, or per-model API key is required.
     """
     model = await get_active_model_by_slug(slug, session)
 
-    if model.public_access and authorization is None:
+    if model.hosted_chat and authorization is None:
         return model
 
     if authorization is None:
         raise HTTPException(status_code=401, detail="Authentication required")
 
-    if not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Invalid authorization header")
-    token = authorization.removeprefix("Bearer ")
+    token = _extract_bearer(authorization)
 
-    if await _validate_model_key(session, model, token):
+    # Per-model key
+    if token and token.startswith("ragr_"):
+        if await _validate_model_key(session, model, token):
+            return model
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    # Clerk JWT
+    clerk_user = await _verify_clerk_token(request)
+    if clerk_user is not None:
+        return model  # Any authenticated Clerk user can chat
+
+    # Legacy admin key
+    if token and token == settings.ragr_api_key:
         return model
 
     raise HTTPException(status_code=401, detail="Invalid API key")

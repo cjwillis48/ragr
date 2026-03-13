@@ -11,6 +11,7 @@ class RagModel(Base):
     __tablename__ = "rag_models"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    owner_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     slug: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
     description: Mapped[str] = mapped_column(Text, default="")
@@ -26,8 +27,9 @@ class RagModel(Base):
     generation_model: Mapped[str] = mapped_column(String(100), nullable=False)
     reranker_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     rerank_model: Mapped[str] = mapped_column(String(100), default="rerank-2.5-lite")
+    history_turns: Mapped[int] = mapped_column(Integer, default=10)
 
-    public_access: Mapped[bool] = mapped_column(Boolean, default=True)
+    hosted_chat: Mapped[bool] = mapped_column(Boolean, default=True)
     allowed_origins: Mapped[list] = mapped_column(JSONB, default=list)
     budget_limit: Mapped[float] = mapped_column(Float, default=10.0)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)

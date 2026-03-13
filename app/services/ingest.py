@@ -46,6 +46,9 @@ async def ingest_content(
     existing = result.scalar_one_or_none()
 
     if existing and existing.content_hash == content_hash:
+        if existing.status != "complete":
+            existing.status = "complete"
+            await session.commit()
         return IngestResult(chunk_count=existing.chunk_count, skipped=True, embedding_cost=0.0)
 
     # If source exists but hash changed, delete old chunks

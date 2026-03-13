@@ -39,14 +39,18 @@ class DynamicCORSMiddleware:
             await self._app(scope, receive, send)
             return
 
+        from app.config import settings
+
         path = scope.get("path", "")
         match = _SLUG_RE.match(path)
         if match:
             slug = match.group(1)
-            self._cors.allow_origins = _origins_by_slug.get(slug, [])
+            model_origins = _origins_by_slug.get(slug, [])
+            self._cors.allow_origins = list(set(model_origins + settings.console_origins))
         else:
-            # Non-model routes: allow any origin that's configured on at least one model
-            self._cors.allow_origins = list({o for origins in _origins_by_slug.values() for o in origins})
+            all_origins = {o for origins in _origins_by_slug.values() for o in origins}
+            all_origins.update(settings.console_origins)
+            self._cors.allow_origins = list(all_origins)
 
         await self._cors(scope, receive, send)
 

@@ -23,6 +23,22 @@ class SourceListResponse(BaseModel):
     total: int
 
 
+class ChunkResponse(BaseModel):
+    id: int
+    content: str
+    source_url: str
+    content_type: str
+    ingested_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ChunkListResponse(BaseModel):
+    source_identifier: str
+    chunks: list[ChunkResponse]
+    total: int
+
+
 class CreateSourceRequest(BaseModel):
     """Unified source creation request. Provide content, url, or urls."""
     source_identifier: str | None = None
