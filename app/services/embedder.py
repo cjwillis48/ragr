@@ -12,20 +12,23 @@ class EmbedResult:
     embeddings: list[list[float]]
     total_tokens: int
 
-_client: voyageai.AsyncClient | None = None
+_platform_client: voyageai.AsyncClient | None = None
 
 logger = logging.getLogger("ragr.embedder")
 
-def _get_client() -> voyageai.AsyncClient:
-    global _client
-    if _client is None:
-        _client = voyageai.AsyncClient(api_key=settings.voyage_api_key, timeout=30)
-    return _client
 
+def _get_client(api_key: str | None = None) -> voyageai.AsyncClient:
+    if api_key:
+        return voyageai.AsyncClient(api_key=api_key, timeout=30)
+    global _platform_client
+    if _platform_client is None:
+        _platform_client = voyageai.AsyncClient(api_key=settings.voyage_api_key, timeout=30)
+    return _platform_client
 
 
 async def embed_texts(
-    texts: list[str], model: str = "voyage-4-lite", batch_size: int = 128
+    texts: list[str], model: str = "voyage-4-lite", batch_size: int = 128,
+    voyage_api_key: str | None = None,
 ) -> EmbedResult:
     """Embed a list of texts using Voyage AI.
 
@@ -33,7 +36,7 @@ async def embed_texts(
     """
     if not texts:
         return EmbedResult(embeddings=[], total_tokens=0)
-    client = _get_client()
+    client = _get_client(voyage_api_key)
 
     if len(texts) <= batch_size:
         result = await client.embed(texts, model=model, input_type="document")
@@ -51,9 +54,9 @@ async def embed_texts(
     return EmbedResult(embeddings=all_embeddings, total_tokens=total_tokens)
 
 
-async def embed_query(text: str, model: str = "voyage-4-lite") -> list[float]:
+async def embed_query(text: str, model: str = "voyage-4-lite", voyage_api_key: str | None = None) -> list[float]:
     """Embed a single query text for retrieval."""
-    client = _get_client()
+    client = _get_client(voyage_api_key)
     t0 = time.perf_counter()
     result = await client.embed([text], model=model, input_type="query")
     logger.info("embed_query %.0fms tokens=%d", (time.perf_counter() - t0) * 1000, result.total_tokens)

@@ -1,10 +1,29 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text, func
+from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text, TypeDecorator, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
+
+
+class EncryptedString(TypeDecorator):
+    """Transparently encrypts/decrypts string values using Fernet."""
+
+    impl = Text
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return None
+        from app.services.crypto import encrypt
+        return encrypt(value)
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return None
+        from app.services.crypto import decrypt
+        return decrypt(value)
 
 
 class RagModel(Base):
@@ -31,6 +50,8 @@ class RagModel(Base):
     hosted_chat: Mapped[bool] = mapped_column(Boolean, default=True)
     allowed_origins: Mapped[list] = mapped_column(JSONB, default=list)
     budget_limit: Mapped[float] = mapped_column(Float, default=10.0)
+    custom_anthropic_key: Mapped[str | None] = mapped_column(EncryptedString, nullable=True)
+    custom_voyage_key: Mapped[str | None] = mapped_column(EncryptedString, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
     created_at: Mapped[datetime] = mapped_column(

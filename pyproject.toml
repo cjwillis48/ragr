@@ -19,4 +19,5 @@ dependencies = [
     "uvicorn>=0.41.0",
     "voyageai>=0.3.2",
     "clerk-backend-api>=1.0.0",
+    "cryptography>=44.0.0",
 ]

@@ -35,6 +35,8 @@ class RagModelCreate(BaseModel):
     hosted_chat: bool | None = None
     allowed_origins: list[str] | None = None
     budget_limit: float | None = None
+    custom_anthropic_key: str | None = None
+    custom_voyage_key: str | None = None
 
 
 class RagModelUpdate(BaseModel):
@@ -54,6 +56,8 @@ class RagModelUpdate(BaseModel):
     allowed_origins: list[str] | None = None
     budget_limit: float | None = None
     is_active: bool | None = None
+    custom_anthropic_key: str | None = None
+    custom_voyage_key: str | None = None
 
 
 class RagModelPublic(BaseModel):
@@ -87,8 +91,17 @@ class RagModelRead(BaseModel):
     hosted_chat: bool
     allowed_origins: list[str]
     budget_limit: float
+    has_custom_anthropic_key: bool = False
+    has_custom_voyage_key: bool = False
     is_active: bool
     created_at: datetime
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+    @classmethod
+    def from_model(cls, model) -> "RagModelRead":
+        data = cls.model_validate(model)
+        data.has_custom_anthropic_key = bool(model.custom_anthropic_key)
+        data.has_custom_voyage_key = bool(model.custom_voyage_key)
+        return data

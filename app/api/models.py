@@ -49,13 +49,15 @@ async def create_model(
         hosted_chat=body.hosted_chat if body.hosted_chat is not None else True,
         allowed_origins=body.allowed_origins if body.allowed_origins is not None else [],
         budget_limit=body.budget_limit if body.budget_limit is not None else settings.default_budget_limit,
+        custom_anthropic_key=body.custom_anthropic_key,
+        custom_voyage_key=body.custom_voyage_key,
     )
     session.add(model)
     await session.commit()
     await session.refresh(model)
     if model.allowed_origins:
         await sync_origins(session)
-    return model
+    return RagModelRead.from_model(model)
 
 
 @router.get("", response_model=list[RagModelRead])
@@ -70,7 +72,7 @@ async def list_models(
         query = query.where(RagModel.owner_id == clerk_user.user_id)
 
     result = await session.execute(query)
-    return result.scalars().all()
+    return [RagModelRead.from_model(m) for m in result.scalars().all()]
 
 
 @router.get("/{slug}/info", response_model=RagModelPublic)
@@ -88,7 +90,7 @@ async def get_model_public(
 @router.get("/{slug}", response_model=RagModelRead, dependencies=[Depends(require_api_key)])
 async def get_model(model: RagModel = Depends(get_model_by_slug)):
     """Get a RAG model by slug."""
-    return model
+    return RagModelRead.from_model(model)
 
 
 @router.patch("/{slug}", response_model=RagModelRead, dependencies=[Depends(require_api_key)])
@@ -105,7 +107,7 @@ async def update_model(
     await session.refresh(model)
     if "allowed_origins" in update_data:
         await sync_origins(session)
-    return model
+    return RagModelRead.from_model(model)
 
 
 @router.delete("/{slug}", status_code=204, dependencies=[Depends(require_api_key)])

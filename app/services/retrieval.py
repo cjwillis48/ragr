@@ -40,7 +40,7 @@ async def retrieve_with_threshold(
     When reranker is enabled, fetches a larger candidate set from pgvector
     then reranks down to top_k.
     """
-    query_embedding = await embed_query(query, model=model.embedding_model)
+    query_embedding = await embed_query(query, model=model.embedding_model, voyage_api_key=model.custom_voyage_key)
     threshold_distance = 1.0 - model.similarity_threshold
 
     candidate_limit = model.top_k
@@ -74,6 +74,7 @@ async def retrieve_with_threshold(
             documents=[c.content for c in chunks],
             model=model.rerank_model,
             top_k=model.top_k,
+            voyage_api_key=model.custom_voyage_key,
         )
         rerank_scores = {chunks[i].id: s for i, s in zip(rerank_result.indices, rerank_result.scores)}
         chunks = [chunks[i] for i in rerank_result.indices]

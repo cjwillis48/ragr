@@ -66,7 +66,7 @@ async def ingest_content(
         return IngestResult(chunk_count=0, skipped=False, embedding_cost=0.0)
 
     # Embed all chunks
-    embed = await embed_texts(chunks, model=model.embedding_model)
+    embed = await embed_texts(chunks, model=model.embedding_model, voyage_api_key=model.custom_voyage_key)
 
     # Store chunks
     for chunk_text_str, embedding in zip(chunks, embed.embeddings):

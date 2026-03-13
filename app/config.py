@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     voyage_api_key: str = ""
 
     ragr_api_key: str = ""
+    encryption_key: str = ""
 
     clerk_secret_key: str = ""
     superuser_id: str = ""
