@@ -55,3 +55,34 @@ class CreateSourceResponse(BaseModel):
     chunks_created: int | None = None
     skipped: bool = False
     message: str
+
+
+class PresignedFileRequest(BaseModel):
+    filename: str
+    content_type: str = "application/octet-stream"
+
+
+class PresignedUploadRequest(BaseModel):
+    files: list[PresignedFileRequest]
+
+
+class PresignedFileInfo(BaseModel):
+    filename: str
+    object_key: str
+    upload_url: str
+    content_type: str
+
+
+class PresignedUploadResponse(BaseModel):
+    upload_id: str
+    files: list[PresignedFileInfo]
+
+
+class ConfirmFileInfo(BaseModel):
+    filename: str
+    object_key: str
+
+
+class ConfirmUploadRequest(BaseModel):
+    upload_id: str
+    files: list[ConfirmFileInfo]

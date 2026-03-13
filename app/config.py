@@ -16,6 +16,12 @@ class Settings(BaseSettings):
     superuser_id: str = ""
     console_origins: list[str] = ["http://localhost:5173"]
 
+    r2_account_id: str = ""
+    r2_access_key_id: str = ""
+    r2_secret_access_key: str = ""
+    r2_bucket_name: str = "ragr-uploads"
+    r2_presigned_expiry: int = 3600
+
     rate_limit_per_min: int = 10
 
     default_similarity_threshold: float = 0.5

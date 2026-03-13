@@ -63,6 +63,20 @@ spec:
                   key: CLERK_SECRET_KEY
             - name: CONSOLE_ORIGINS
               value: '["https://ragr.charliewillis.com"]'
+            - name: R2_ACCOUNT_ID
+              value: "0a5f0f60df717358942f04cca4d61c3a"
+            - name: R2_BUCKET_NAME
+              value: "ragr-uploads"
+            - name: R2_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: ragr-secrets
+                  key: R2_ACCESS_KEY_ID
+            - name: R2_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ragr-secrets
+                  key: R2_SECRET_ACCESS_KEY
           livenessProbe:
             httpGet:
               path: /healthz

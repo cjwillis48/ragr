@@ -16,12 +16,17 @@ from app.schemas.admin import PurgeResponse
 from app.schemas.sources import (
     ChunkListResponse,
     ChunkResponse,
+    ConfirmUploadRequest,
     CreateSourceRequest,
     CreateSourceResponse,
+    PresignedUploadRequest,
+    PresignedUploadResponse,
+    PresignedFileInfo,
     SourceListResponse,
     SourceResponse,
 )
 from app.services.ingest import ingest_content
+from app.services.r2 import is_configured as r2_is_configured
 
 router = APIRouter(tags=["sources"])
 logger = logging.getLogger("ragr.sources")
@@ -486,3 +491,147 @@ async def upload_source(
         )
 
     return results
+
+
+# ---------------------------------------------------------------------------
+# Presigned R2 upload flow
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/models/{slug}/sources/upload/presign",
+    response_model=PresignedUploadResponse,
+)
+async def presign_upload(
+    body: PresignedUploadRequest,
+    model: RagModel = Depends(require_model_auth),
+):
+    """Generate presigned R2 PUT URLs for each file. Browser uploads directly to R2."""
+    if not r2_is_configured():
+        raise HTTPException(status_code=501, detail="R2 storage is not configured")
+
+    import uuid
+    from app.services.r2 import generate_presigned_upload_url
+
+    upload_id = str(uuid.uuid4())
+    files = []
+    for f in body.files:
+        object_key = f"uploads/{model.id}/{upload_id}/{f.filename}"
+        url = generate_presigned_upload_url(object_key, f.content_type)
+        files.append(PresignedFileInfo(
+            filename=f.filename,
+            object_key=object_key,
+            upload_url=url,
+            content_type=f.content_type,
+        ))
+
+    return PresignedUploadResponse(upload_id=upload_id, files=files)
+
+
+@router.post(
+    "/models/{slug}/sources/upload/confirm",
+    response_model=list[CreateSourceResponse],
+    status_code=202,
+)
+async def confirm_upload(
+    body: ConfirmUploadRequest,
+    model: RagModel = Depends(require_model_auth),
+    session: AsyncSession = Depends(get_session),
+):
+    """Confirm files have been uploaded to R2. Triggers background ingestion."""
+    if not r2_is_configured():
+        raise HTTPException(status_code=501, detail="R2 storage is not configured")
+
+    results = []
+    for f in body.files:
+        # Validate object key belongs to this model
+        if not f.object_key.startswith(f"uploads/{model.id}/"):
+            raise HTTPException(status_code=403, detail=f"Object key does not belong to this model: {f.object_key}")
+
+        src_result = await session.execute(
+            select(IngestionSource).where(
+                IngestionSource.model_id == model.id,
+                IngestionSource.source_identifier == f.filename,
+            )
+        )
+        existing = src_result.scalar_one_or_none()
+        if existing:
+            existing.status = "pending"
+        else:
+            session.add(IngestionSource(
+                model_id=model.id,
+                source_identifier=f.filename,
+                content_hash="",
+                chunk_count=0,
+                source_url=f.filename,
+                content_type="pending",
+                status="pending",
+            ))
+
+        results.append(CreateSourceResponse(
+            source_identifier=f.filename,
+            status="pending",
+            message=f"Ingestion started for {f.filename}",
+        ))
+
+    await session.commit()
+
+    for f in body.files:
+        asyncio.create_task(
+            _ingest_r2_file_background(
+                model_id=model.id,
+                object_key=f.object_key,
+                filename=f.filename,
+            )
+        )
+
+    return results
+
+
+async def _ingest_r2_file_background(
+    model_id: int,
+    object_key: str,
+    filename: str,
+) -> None:
+    """Download file from R2, extract text, ingest, then delete from R2."""
+    from app.services.r2 import download_object, delete_object
+
+    async with async_session() as session:
+        result = await session.execute(select(RagModel).where(RagModel.id == model_id))
+        model = result.scalar_one()
+
+        try:
+            raw = await asyncio.get_event_loop().run_in_executor(
+                None, download_object, object_key
+            )
+            text, content_type = _extract_text(filename, raw)
+
+            await ingest_content(
+                session=session,
+                model=model,
+                content=text,
+                source_identifier=filename,
+                content_type=content_type,
+                source_url=filename,
+            )
+            logger.info("R2 file %s: ingested successfully", filename)
+        except Exception:
+            logger.exception("R2 file ingestion failed for %s", filename)
+            async with async_session() as err_session:
+                err_result = await err_session.execute(
+                    select(IngestionSource).where(
+                        IngestionSource.model_id == model_id,
+                        IngestionSource.source_identifier == filename,
+                    )
+                )
+                err_src = err_result.scalar_one_or_none()
+                if err_src:
+                    err_src.status = "failed"
+                    await err_session.commit()
+        finally:
+            try:
+                await asyncio.get_event_loop().run_in_executor(
+                    None, delete_object, object_key
+                )
+            except Exception:
+                logger.warning("Failed to delete R2 object %s", object_key)
