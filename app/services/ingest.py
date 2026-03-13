@@ -1,7 +1,7 @@
 import hashlib
 from dataclasses import dataclass
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -74,6 +74,7 @@ async def ingest_content(
             model_id=model.id,
             content=chunk_text_str,
             embedding=embedding,
+            search_vector=func.to_tsvector("english", chunk_text_str),
             source_url=source_url,
             source_identifier=source_identifier,
             content_type=content_type,

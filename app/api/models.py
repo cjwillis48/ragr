@@ -87,16 +87,16 @@ async def get_model_public(
     return info
 
 
-@router.get("/{slug}", response_model=RagModelRead, dependencies=[Depends(require_api_key)])
-async def get_model(model: RagModel = Depends(get_model_by_slug)):
+@router.get("/{slug}", response_model=RagModelRead)
+async def get_model(model: RagModel = Depends(require_model_auth)):
     """Get a RAG model by slug."""
     return RagModelRead.from_model(model)
 
 
-@router.patch("/{slug}", response_model=RagModelRead, dependencies=[Depends(require_api_key)])
+@router.patch("/{slug}", response_model=RagModelRead)
 async def update_model(
     body: RagModelUpdate,
-    model: RagModel = Depends(get_model_by_slug),
+    model: RagModel = Depends(require_model_auth),
     session: AsyncSession = Depends(get_session),
 ):
     """Update a RAG model's configuration."""
@@ -110,9 +110,9 @@ async def update_model(
     return RagModelRead.from_model(model)
 
 
-@router.delete("/{slug}", status_code=204, dependencies=[Depends(require_api_key)])
+@router.delete("/{slug}", status_code=204)
 async def delete_model(
-    model: RagModel = Depends(get_model_by_slug),
+    model: RagModel = Depends(require_model_auth),
     session: AsyncSession = Depends(get_session),
 ):
     """Delete a RAG model and all associated data."""

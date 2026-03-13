@@ -62,7 +62,7 @@ async def _log_conversation(
     """Record token usage and log the conversation."""
     await record_usage(session, model, tokens_in, tokens_out)
     retrieved_chunks = (
-        [{"chunk_id": s.chunk_id, "distance": s.distance, "rerank_score": s.rerank_score} for s in scores]
+        [{"chunk_id": s.chunk_id, "distance": s.distance, "rerank_score": s.rerank_score, "keyword_rank": s.keyword_rank} for s in scores]
         if scores else None
     )
     session.add(ConversationLog(
