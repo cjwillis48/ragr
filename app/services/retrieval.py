@@ -2,7 +2,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.content import ContentChunk
@@ -54,14 +54,24 @@ async def _vector_search(
     return list(result.all())
 
 
+import re
+
+_WORD_RE = re.compile(r"[a-zA-Z0-9]+")
+
+
 async def _keyword_search(
     session: AsyncSession,
     model: RagModel,
     query: str,
     limit: int,
 ) -> list[tuple[ContentChunk, float]]:
-    """Retrieve chunks by full-text keyword search."""
-    ts_query = func.plainto_tsquery("english", query)
+    """Retrieve chunks by full-text keyword search using OR matching."""
+    # Extract alphanumeric words, skip short ones, join with OR
+    words = [w for w in _WORD_RE.findall(query.lower()) if len(w) > 1]
+    if not words:
+        return []
+    or_expr = " | ".join(words)
+    ts_query = func.to_tsquery("english", or_expr)
     rank = func.ts_rank(ContentChunk.search_vector, ts_query).label("rank")
     stmt = (
         select(ContentChunk, rank)
