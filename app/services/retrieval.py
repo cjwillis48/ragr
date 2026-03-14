@@ -28,12 +28,13 @@ class ChunkScore:
 
     @property
     def retrieval_method(self) -> str:
-        if self.rerank_score is not None:
-            return "rerank"
-        if self.keyword_rank is not None and self.distance >= 1.0:
-            return "keyword"
-        if self.keyword_rank is not None:
+        """How this chunk was retrieved (reranker is orthogonal — just re-orders)."""
+        has_vector = self.distance < 1.0
+        has_keyword = self.keyword_rank is not None
+        if has_vector and has_keyword:
             return "hybrid"
+        if has_keyword:
+            return "keyword"
         return "vector"
 
 

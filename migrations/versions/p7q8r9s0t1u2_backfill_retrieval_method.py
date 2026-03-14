@@ -17,11 +17,8 @@ depends_on = None
 def upgrade() -> None:
     conn = op.get_bind()
     # Update each element in the retrieved_chunks JSONB array with a retrieval_method field.
-    # Logic:
-    #   rerank_score is not null  → "rerank"
-    #   keyword_rank is not null AND distance >= 1.0 → "keyword"
-    #   keyword_rank is not null  → "hybrid"
-    #   else → "vector"
+    # NOTE: This migration had a bug — it labeled everything with rerank_score as "rerank".
+    # Fixed by migration q8r9s0t1u2v3.
     conn.execute(
         sa.text("""
             UPDATE messages
