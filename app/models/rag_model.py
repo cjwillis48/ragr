@@ -63,7 +63,8 @@ class RagModel(Base):
 
     # Relationships
     chunks = relationship("ContentChunk", back_populates="rag_model", cascade="all, delete-orphan")
-    conversations = relationship("ConversationLog", back_populates="rag_model", cascade="all, delete-orphan")
+    conversations = relationship("Conversation", back_populates="rag_model", cascade="all, delete-orphan")
+    messages = relationship("Message", back_populates="rag_model", cascade="all, delete-orphan")
     token_usages = relationship("TokenUsage", back_populates="rag_model", cascade="all, delete-orphan")
     ingestion_sources = relationship("IngestionSource", back_populates="rag_model", cascade="all, delete-orphan")
     api_keys = relationship("ModelApiKey", back_populates="rag_model", cascade="all, delete-orphan")

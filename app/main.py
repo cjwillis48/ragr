@@ -26,13 +26,9 @@ for _handler in logging.root.handlers:
 logger = logging.getLogger("ragr")
 
 
-class _HealthCheckFilter(logging.Filter):
-    def filter(self, record: logging.LogRecord) -> bool:
-        msg = record.getMessage()
-        return "/healthz" not in msg and "/readyz" not in msg
-
-
-logging.getLogger("uvicorn.access").addFilter(_HealthCheckFilter())
+# Suppress uvicorn's default access logger — we log access from
+# RequestIdMiddleware instead, so every line has a consistent format.
+logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 
 
 @asynccontextmanager

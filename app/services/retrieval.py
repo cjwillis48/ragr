@@ -26,6 +26,16 @@ class ChunkScore:
     rerank_score: float | None = None
     keyword_rank: int | None = None
 
+    @property
+    def retrieval_method(self) -> str:
+        if self.rerank_score is not None:
+            return "rerank"
+        if self.keyword_rank is not None and self.distance >= 1.0:
+            return "keyword"
+        if self.keyword_rank is not None:
+            return "hybrid"
+        return "vector"
+
 
 @dataclass
 class RetrievalResult:

@@ -7,6 +7,7 @@ class StatsResponse(BaseModel):
     model_slug: str
     total_chunks: int
     total_conversations: int
+    total_messages: int
     unanswered_questions: int
     current_month_cost: float
     budget_limit: float
@@ -20,9 +21,8 @@ class PurgeResponse(BaseModel):
     sources_deleted: int
 
 
-class ConversationResponse(BaseModel):
+class MessageResponse(BaseModel):
     id: int
-    session_id: str | None
     question: str
     answer: str
     status: str
@@ -30,6 +30,29 @@ class ConversationResponse(BaseModel):
     tokens_out: int
     retrieved_chunks: list[dict] | None = None
     created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ConversationSummaryResponse(BaseModel):
+    id: int
+    session_id: str
+    title: str | None
+    message_count: int
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ConversationDetailResponse(BaseModel):
+    id: int
+    session_id: str
+    title: str | None
+    messages: list[MessageResponse]
+    message_count: int
+    created_at: datetime
+    updated_at: datetime
 
     model_config = {"from_attributes": True}
 
@@ -46,7 +69,7 @@ class ChunkResponse(BaseModel):
 
 class ConversationListResponse(BaseModel):
     model_slug: str
-    conversations: list[ConversationResponse]
+    conversations: list[ConversationSummaryResponse]
     total: int
     limit: int
     offset: int

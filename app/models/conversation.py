@@ -7,14 +7,37 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.models.base import Base
 
 
-class ConversationLog(Base):
-    __tablename__ = "conversation_logs"
+class Conversation(Base):
+    __tablename__ = "conversations"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     model_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("rag_models.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    session_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    session_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    title: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    message_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    rag_model = relationship("RagModel", back_populates="conversations")
+    messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan", order_by="Message.created_at")
+
+
+class Message(Base):
+    __tablename__ = "messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    conversation_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    model_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("rag_models.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     question: Mapped[str] = mapped_column(Text, nullable=False)
     answer: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(20), default="answered")
@@ -25,4 +48,5 @@ class ConversationLog(Base):
         DateTime(timezone=True), server_default=func.now()
     )
 
-    rag_model = relationship("RagModel", back_populates="conversations")
+    conversation = relationship("Conversation", back_populates="messages")
+    rag_model = relationship("RagModel", back_populates="messages")
