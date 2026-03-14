@@ -77,15 +77,12 @@ async def _verify_clerk_token(request: Request) -> ClerkUser | None:
 
 
 # ---------------------------------------------------------------------------
-# Legacy API key helpers
+# Per-model API key validation
 # ---------------------------------------------------------------------------
 
 
 async def _validate_model_key(session: AsyncSession, model: RagModel, token: str) -> bool:
-    """Check a token against the admin key or per-model API keys. Returns True if valid."""
-    if token == settings.ragr_api_key:
-        return True
-
+    """Check a token against per-model API keys. Returns True if valid."""
     key_prefix = token[:12]
     result = await session.execute(
         select(ModelApiKey).where(
@@ -153,21 +150,13 @@ async def get_clerk_user(
 async def require_api_key(
     request: Request,
     authorization: str = Header(...),
-) -> ClerkUser | None:
-    """Admin-level auth for model CRUD.
-
-    Accepts: Clerk JWT or legacy admin API key.
-    Returns ClerkUser if Clerk auth, None if legacy key.
-    """
+) -> ClerkUser:
+    """Admin-level auth for model CRUD. Requires Clerk JWT."""
     clerk_user = await _verify_clerk_token(request)
     if clerk_user is not None:
         return clerk_user
 
-    token = _extract_bearer(authorization)
-    if token and token == settings.ragr_api_key:
-        return None
-
-    raise HTTPException(status_code=401, detail="Invalid API key")
+    raise HTTPException(status_code=401, detail="Authentication required")
 
 
 async def require_model_auth(
@@ -204,11 +193,7 @@ async def require_model_auth(
             return model
         raise HTTPException(status_code=403, detail="You do not own this model")
 
-    # Fall back to legacy admin key
-    if token and token == settings.ragr_api_key:
-        return model
-
-    raise HTTPException(status_code=401, detail="Invalid API key")
+    raise HTTPException(status_code=401, detail="Authentication required")
 
 
 async def require_chat_auth(
@@ -243,8 +228,4 @@ async def require_chat_auth(
     if clerk_user is not None:
         return model  # Any authenticated Clerk user can chat
 
-    # Legacy admin key
-    if token and token == settings.ragr_api_key:
-        return model
-
-    raise HTTPException(status_code=401, detail="Invalid API key")
+    raise HTTPException(status_code=401, detail="Authentication required")

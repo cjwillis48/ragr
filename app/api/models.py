@@ -13,6 +13,7 @@ from app.dependencies import (
     require_model_auth,
 )
 from app.models.rag_model import RagModel
+from app.models.system_prompt_history import SystemPromptHistory
 from app.schemas.models import ChatTheme, RagModelCreate, RagModelPublic, RagModelRead, RagModelUpdate
 from app.services.budget import check_budget
 
@@ -22,7 +23,7 @@ router = APIRouter(prefix="/models", tags=["models"])
 @router.post("", response_model=RagModelRead, status_code=201)
 async def create_model(
     body: RagModelCreate,
-    clerk_user: ClerkUser | None = Depends(require_api_key),
+    clerk_user: ClerkUser = Depends(require_api_key),
     session: AsyncSession = Depends(get_session),
 ):
     """Create a new RAG model."""
@@ -31,7 +32,7 @@ async def create_model(
         raise HTTPException(status_code=409, detail="Model with this slug already exists")
 
     model = RagModel(
-        owner_id=clerk_user.user_id if clerk_user else None,
+        owner_id=clerk_user.user_id,
         name=body.name,
         slug=body.slug,
         description=body.description,
@@ -62,7 +63,7 @@ async def create_model(
 
 @router.get("", response_model=list[RagModelRead])
 async def list_models(
-    clerk_user: ClerkUser | None = Depends(require_api_key),
+    clerk_user: ClerkUser = Depends(require_api_key),
     session: AsyncSession = Depends(get_session),
 ):
     """List all RAG models. Clerk users see only their own models."""
@@ -101,6 +102,15 @@ async def update_model(
 ):
     """Update a RAG model's configuration."""
     update_data = body.model_dump(exclude_unset=True)
+
+    # Record system prompt change in history
+    if "system_prompt" in update_data and update_data["system_prompt"] != model.system_prompt:
+        session.add(SystemPromptHistory(
+            model_id=model.id,
+            prompt_text=update_data["system_prompt"],
+            source="manual",
+        ))
+
     for field, value in update_data.items():
         setattr(model, field, value)
     await session.commit()

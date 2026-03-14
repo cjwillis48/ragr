@@ -1,18 +1,27 @@
+import json
+import logging
+
+import anthropic
 from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.config import settings
 from app.database import get_session
 from app.dependencies import require_model_auth
 from app.models.content import ContentChunk
 from app.models.conversation import Conversation, Message
 from app.models.ingestion_source import IngestionSource
 from app.models.rag_model import RagModel
-from app.schemas.admin import ChunkResponse, ConversationDetailResponse, ConversationListResponse, ConversationSummaryResponse, MessageResponse, StatsResponse
+from app.models.system_prompt_history import SystemPromptHistory
+from app.schemas.admin import ChunkResponse, ConversationDetailResponse, ConversationListResponse, ConversationSummaryResponse, StatsResponse, SystemPromptHistoryResponse
 from app.services.budget import get_current_month_usage
 
 router = APIRouter(tags=["admin"])
+logger = logging.getLogger("ragr.admin")
 
 
 @router.get(
@@ -142,3 +151,140 @@ async def get_chunks(
         )
     )
     return result.scalars().all()
+
+
+# --- System Prompt History & Generation ---
+
+
+@router.get(
+    "/models/{slug}/system-prompt-history",
+    response_model=list[SystemPromptHistoryResponse],
+)
+async def list_system_prompt_history(
+    model: RagModel = Depends(require_model_auth),
+    session: AsyncSession = Depends(get_session),
+):
+    """List system prompt history, newest first."""
+    result = await session.execute(
+        select(SystemPromptHistory)
+        .where(SystemPromptHistory.model_id == model.id)
+        .order_by(SystemPromptHistory.created_at.desc())
+    )
+    return [SystemPromptHistoryResponse.model_validate(r) for r in result.scalars().all()]
+
+
+@router.post(
+    "/models/{slug}/system-prompt-history/{history_id}/rollback",
+    response_model=SystemPromptHistoryResponse,
+)
+async def rollback_system_prompt(
+    history_id: int,
+    model: RagModel = Depends(require_model_auth),
+    session: AsyncSession = Depends(get_session),
+):
+    """Rollback to a previous system prompt. Creates a new history entry."""
+    result = await session.execute(
+        select(SystemPromptHistory).where(
+            SystemPromptHistory.id == history_id,
+            SystemPromptHistory.model_id == model.id,
+        )
+    )
+    entry = result.scalar_one_or_none()
+    if not entry:
+        raise HTTPException(status_code=404, detail="History entry not found")
+
+    # Record the rollback as a new history entry
+    new_entry = SystemPromptHistory(
+        model_id=model.id,
+        prompt_text=entry.prompt_text,
+        source="manual",
+        input_text=f"Rolled back to version from {entry.created_at.isoformat()}",
+    )
+    session.add(new_entry)
+
+    model.system_prompt = entry.prompt_text
+    await session.commit()
+    await session.refresh(new_entry)
+    return SystemPromptHistoryResponse.model_validate(new_entry)
+
+
+_SYSTEM_PROMPT_GENERATOR = """You are an expert at writing system prompts for RAG (Retrieval-Augmented Generation) chatbots.
+
+Given the bot's name, description, and optionally the user's rough draft or notes, write an effective system prompt.
+
+Guidelines:
+- Write in second person ("You are...")
+- Be specific about the bot's domain, tone, and boundaries
+- Include guidance on how to handle off-topic questions
+- Keep it concise but thorough (aim for 3-8 sentences)
+- Don't include RAG-specific instructions (those are added automatically)
+- Match the tone to the domain (professional for business, friendly for community, etc.)
+
+Respond with ONLY the system prompt text, no explanations or markdown."""
+
+
+class GenerateSystemPromptRequest(BaseModel):
+    input_text: str = ""
+
+
+@router.post("/models/{slug}/generate-system-prompt")
+async def generate_system_prompt(
+    body: GenerateSystemPromptRequest,
+    model: RagModel = Depends(require_model_auth),
+):
+    """Stream-generate a system prompt based on model info and user input."""
+    user_parts = [f"Bot name: {model.name}"]
+    if model.description:
+        user_parts.append(f"Bot description: {model.description}")
+    if body.input_text.strip():
+        user_parts.append(f"User's notes/draft:\n{body.input_text.strip()}")
+
+    user_message = "\n\n".join(user_parts)
+
+    api_key = model.custom_anthropic_key or settings.anthropic_api_key
+    client = anthropic.AsyncAnthropic(api_key=api_key, max_retries=2, timeout=30.0)
+
+    async def stream():
+        try:
+            async with client.messages.stream(
+                model="claude-haiku-4-5",
+                max_tokens=1024,
+                system=_SYSTEM_PROMPT_GENERATOR,
+                messages=[{"role": "user", "content": user_message}],
+            ) as response:
+                async for text in response.text_stream:
+                    yield f"data: {json.dumps(text)}\n\n"
+            yield "event: done\ndata: {}\n\n"
+        except Exception:
+            logger.exception("System prompt generation failed for model_id=%s", model.id)
+            yield f"event: error\ndata: {json.dumps({'error': 'Generation failed'})}\n\n"
+
+    return StreamingResponse(stream(), media_type="text/event-stream")
+
+
+class AcceptGeneratedPromptRequest(BaseModel):
+    prompt_text: str
+    input_text: str = ""
+
+
+@router.post(
+    "/models/{slug}/system-prompt-history/accept-generated",
+    response_model=SystemPromptHistoryResponse,
+)
+async def accept_generated_prompt(
+    body: AcceptGeneratedPromptRequest,
+    model: RagModel = Depends(require_model_auth),
+    session: AsyncSession = Depends(get_session),
+):
+    """Accept a generated system prompt — saves it and records history."""
+    entry = SystemPromptHistory(
+        model_id=model.id,
+        prompt_text=body.prompt_text,
+        source="generated",
+        input_text=body.input_text or None,
+    )
+    session.add(entry)
+    model.system_prompt = body.prompt_text
+    await session.commit()
+    await session.refresh(entry)
+    return SystemPromptHistoryResponse.model_validate(entry)

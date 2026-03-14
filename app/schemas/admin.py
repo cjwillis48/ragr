@@ -73,3 +73,13 @@ class ConversationListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class SystemPromptHistoryResponse(BaseModel):
+    id: int
+    prompt_text: str
+    source: str
+    input_text: str | None = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}

@@ -46,11 +46,6 @@ spec:
                 secretKeyRef:
                   name: ragr-secrets
                   key: VOYAGE_API_KEY
-            - name: RAGR_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: ragr-secrets
-                  key: RAGR_API_KEY
             - name: ENCRYPTION_KEY
               valueFrom:
                 secretKeyRef:

@@ -68,3 +68,4 @@ class RagModel(Base):
     token_usages = relationship("TokenUsage", back_populates="rag_model", cascade="all, delete-orphan")
     ingestion_sources = relationship("IngestionSource", back_populates="rag_model", cascade="all, delete-orphan")
     api_keys = relationship("ModelApiKey", back_populates="rag_model", cascade="all, delete-orphan")
+    system_prompt_history = relationship("SystemPromptHistory", back_populates="rag_model", cascade="all, delete-orphan", order_by="SystemPromptHistory.created_at.desc()")

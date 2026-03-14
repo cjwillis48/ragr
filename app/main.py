@@ -33,8 +33,8 @@ logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    if not settings.ragr_api_key:
-        raise RuntimeError("RAGR_API_KEY must be set")
+    if not settings.clerk_secret_key:
+        raise RuntimeError("CLERK_SECRET_KEY must be set")
     logger.info("RAGr starting up")
     async with async_session() as session:
         await sync_origins(session)
