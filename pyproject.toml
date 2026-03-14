@@ -1,6 +1,6 @@
 [project]
 name = "ragr"
-version = "1.0.0"
+version = "1.1.0"
 description = "Multi-tenant RAG platform"
 requires-python = ">=3.12"
 dependencies = [
