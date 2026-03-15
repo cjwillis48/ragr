@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -31,6 +32,18 @@ logger = logging.getLogger("ragr")
 logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 
 
+async def _prefetch_jwks():
+    """Warm Clerk JWKS cache in the background so health probes aren't blocked."""
+    from app.dependencies import _get_clerk
+    clerk = _get_clerk()
+    if clerk:
+        try:
+            jwks = await asyncio.get_event_loop().run_in_executor(None, clerk.jwks.get_jwks)
+            logger.info("Clerk JWKS prefetched (%d keys)", len(jwks.keys) if jwks and jwks.keys else 0)
+        except Exception:
+            logger.warning("Failed to prefetch Clerk JWKS — first request will be slower", exc_info=True)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     if not settings.clerk_secret_key:
@@ -38,15 +51,8 @@ async def lifespan(app: FastAPI):
     logger.info("RAGr starting up")
     async with async_session() as session:
         await sync_origins(session)
-    # Warm Clerk JWKS cache so the first request isn't slow
-    from app.dependencies import _get_clerk
-    clerk = _get_clerk()
-    if clerk:
-        try:
-            jwks = clerk.jwks.get_jwks()
-            logger.info("Clerk JWKS prefetched (%d keys)", len(jwks.keys) if jwks and jwks.keys else 0)
-        except Exception:
-            logger.warning("Failed to prefetch Clerk JWKS — first request will be slower", exc_info=True)
+    # Prefetch JWKS in background so it doesn't block health probes
+    asyncio.create_task(_prefetch_jwks())
     yield
     logger.info("RAGr shutting down")
     await engine.dispose()
