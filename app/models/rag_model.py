@@ -39,7 +39,7 @@ class RagModel(Base):
 
     chunk_size: Mapped[int] = mapped_column(Integer, default=1000)
     chunk_overlap: Mapped[int] = mapped_column(Integer, default=100)
-    similarity_threshold: Mapped[float] = mapped_column(Float, default=0.5)
+    similarity_threshold: Mapped[float] = mapped_column(Float, default=0.3)
     top_k: Mapped[int] = mapped_column(Integer, default=15)
     embedding_model: Mapped[str] = mapped_column(String(100), nullable=False)
     generation_model: Mapped[str] = mapped_column(String(100), nullable=False)

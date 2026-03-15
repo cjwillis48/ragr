@@ -23,7 +23,7 @@ class Settings(BaseSettings):
 
     rate_limit_per_min: int = 10
 
-    default_similarity_threshold: float = 0.5
+    default_similarity_threshold: float = 0.3
     default_chunk_size: int = 1000
     default_chunk_overlap: int = 100
     default_top_k: int = 15

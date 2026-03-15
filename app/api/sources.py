@@ -21,6 +21,8 @@ from app.schemas.sources import (
     ChunkListResponse,
     ChunkResponse,
     ConfirmUploadRequest,
+    CrawlRequest,
+    CrawlResponse,
     CreateSourceRequest,
     CreateSourceResponse,
     PresignedUploadRequest,
@@ -642,3 +644,73 @@ async def _ingest_r2_file_background(
                 )
             except Exception:
                 logger.warning("Failed to delete R2 object %s", object_key)
+
+
+# ---------------------------------------------------------------------------
+# Site crawl
+# ---------------------------------------------------------------------------
+
+
+async def _crawl_site_background(model_id: int, crawl_request: CrawlRequest) -> None:
+    """Crawl a site and ingest all discovered pages."""
+    from app.services.crawler import crawl_site
+
+    try:
+        pages = await crawl_site(
+            root_url=crawl_request.url,
+            max_pages=crawl_request.max_pages,
+            max_depth=crawl_request.max_depth,
+            prefix=crawl_request.prefix,
+            exclude_patterns=crawl_request.exclude_patterns,
+        )
+    except Exception:
+        logger.exception("Crawl failed for %s", crawl_request.url)
+        return
+
+    for page in pages:
+        async with _ingest_semaphore:
+            async with async_session() as session:
+                result = await session.execute(select(RagModel).where(RagModel.id == model_id))
+                model = result.scalar_one()
+
+                try:
+                    await ingest_content(
+                        session=session,
+                        model=model,
+                        content=page.text,
+                        source_identifier=page.url,
+                        content_type=page.content_type,
+                        source_url=page.url,
+                    )
+                    logger.info("Crawl ingest complete: %s", page.url)
+                except Exception:
+                    logger.exception("Crawl ingest failed for %s", page.url)
+                    err_result = await session.execute(
+                        select(IngestionSource).where(
+                            IngestionSource.model_id == model_id,
+                            IngestionSource.source_identifier == page.url,
+                        )
+                    )
+                    err_src = err_result.scalar_one_or_none()
+                    if err_src:
+                        err_src.status = "failed"
+                        await session.commit()
+
+
+@router.post(
+    "/models/{slug}/sources/crawl",
+    response_model=CrawlResponse,
+    status_code=202,
+)
+async def crawl_site_endpoint(
+    body: CrawlRequest,
+    model: RagModel = Depends(require_model_auth),
+):
+    """Crawl a website and ingest all discovered pages. Runs in the background."""
+    asyncio.create_task(_crawl_site_background(model.id, body))
+
+    return CrawlResponse(
+        status="pending",
+        message=f"Crawling {body.url} (max {body.max_pages} pages, depth {body.max_depth})",
+        pages_queued=0,
+    )
