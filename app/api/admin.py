@@ -1,11 +1,12 @@
 import json
 import logging
+from datetime import UTC, datetime, timedelta
 
 import anthropic
 from fastapi import APIRouter, Depends, Query, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import Date, cast, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -17,7 +18,8 @@ from app.models.conversation import Conversation, Message
 from app.models.ingestion_source import IngestionSource
 from app.models.rag_model import RagModel
 from app.models.system_prompt_history import SystemPromptHistory
-from app.schemas.admin import ChunkResponse, ConversationDetailResponse, ConversationListResponse, ConversationSummaryResponse, StatsResponse, SystemPromptHistoryResponse
+from app.schemas.admin import ChunkResponse, ConversationDetailResponse, ConversationListResponse, \
+    ConversationSummaryResponse, DailyStatsEntry, StatsResponse, SystemPromptHistoryResponse, TopSourceEntry
 from app.services.budget import get_current_month_usage
 
 router = APIRouter(tags=["admin"])
@@ -29,8 +31,8 @@ logger = logging.getLogger("ragr.admin")
     response_model=StatsResponse,
 )
 async def model_stats(
-    model: RagModel = Depends(require_model_auth),
-    session: AsyncSession = Depends(get_session),
+        model: RagModel = Depends(require_model_auth),
+        session: AsyncSession = Depends(get_session),
 ):
     """Get per-model statistics."""
     chunk_count = await session.scalar(
@@ -38,17 +40,18 @@ async def model_stats(
     )
 
     convo_count = await session.scalar(
-        select(func.count()).select_from(Conversation).where(Conversation.model_id == model.id)
+        select(func.count()).select_from(Conversation).where(Conversation.model_id == model.id,
+                                                             Conversation.deleted_at.is_(None))
     )
 
     message_count = await session.scalar(
-        select(func.count()).select_from(Message).where(Message.model_id == model.id)
+        select(func.count()).select_from(Message).where(Message.model_id == model.id, Message.deleted_at.is_(None))
     )
 
     unanswered = await session.scalar(
         select(func.count())
         .select_from(Message)
-        .where(Message.model_id == model.id, Message.status == "unanswered")
+        .where(Message.model_id == model.id, Message.status == "unanswered", Message.deleted_at.is_(None))
     )
 
     source_count = await session.scalar(
@@ -72,17 +75,103 @@ async def model_stats(
 
 
 @router.get(
+    "/models/{slug}/stats/daily",
+    response_model=list[DailyStatsEntry],
+)
+async def daily_stats(
+        model: RagModel = Depends(require_model_auth),
+        session: AsyncSession = Depends(get_session),
+        days: int = Query(30, ge=1, le=365),
+):
+    """Daily message stats for the last N days."""
+    cutoff = datetime.now(UTC) - timedelta(days=days)
+    day_col = cast(Message.created_at, Date).label("day")
+
+    result = await session.execute(
+        select(
+            day_col,
+            func.count().filter(Message.status == "answered").label("answered"),
+            func.count().filter(Message.status == "unanswered").label("unanswered"),
+            func.count().filter(Message.status == "off_topic").label("off_topic"),
+            func.coalesce(func.sum(Message.tokens_in), 0).label("tokens_in"),
+            func.coalesce(func.sum(Message.tokens_out), 0).label("tokens_out"),
+        )
+        .where(
+            Message.model_id == model.id,
+            Message.deleted_at.is_(None),
+            Message.created_at >= cutoff,
+        )
+        .group_by(day_col)
+        .order_by(day_col)
+    )
+    rows = result.all()
+
+    return [
+        DailyStatsEntry(
+            date=row.day,
+            answered=row.answered,
+            unanswered=row.unanswered,
+            off_topic=row.off_topic,
+            tokens_in=row.tokens_in,
+            tokens_out=row.tokens_out,
+        )
+        for row in rows
+    ]
+
+
+@router.get(
+    "/models/{slug}/stats/top-sources",
+    response_model=list[TopSourceEntry],
+)
+async def top_sources(
+        model: RagModel = Depends(require_model_auth),
+        session: AsyncSession = Depends(get_session),
+        limit: int = Query(10, ge=1, le=50),
+):
+    """Top sources by retrieval count. Counts how often each source's chunks appear in retrieved_chunks."""
+    result = await session.execute(
+        text("""
+            SELECT cc.source_identifier,
+                   COUNT(*) AS retrieval_count,
+                   COALESCE(src.chunk_count, 0) AS chunk_count
+            FROM messages m
+            CROSS JOIN LATERAL jsonb_array_elements(m.retrieved_chunks) AS elem
+            JOIN content_chunks cc ON cc.id = (elem->>'chunk_id')::int
+            LEFT JOIN ingestion_sources src
+                ON src.model_id = m.model_id AND src.source_identifier = cc.source_identifier
+            WHERE m.model_id = :model_id
+              AND m.deleted_at IS NULL
+              AND m.retrieved_chunks IS NOT NULL
+              AND jsonb_typeof(m.retrieved_chunks) = 'array'
+            GROUP BY cc.source_identifier, src.chunk_count
+            ORDER BY retrieval_count DESC
+            LIMIT :limit
+        """),
+        {"model_id": model.id, "limit": limit},
+    )
+
+    return [
+        TopSourceEntry(
+            source_identifier=row.source_identifier,
+            retrieval_count=row.retrieval_count,
+            chunk_count=row.chunk_count,
+        )
+        for row in result
+    ]
+
+
+@router.get(
     "/models/{slug}/conversations",
     response_model=ConversationListResponse,
 )
 async def list_conversations(
-    model: RagModel = Depends(require_model_auth),
-    session: AsyncSession = Depends(get_session),
-    limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
+        model: RagModel = Depends(require_model_auth),
+        session: AsyncSession = Depends(get_session),
+        limit: int = Query(50, ge=1, le=200),
+        offset: int = Query(0, ge=0),
 ):
     """List conversations for a model, newest first."""
-    base = select(Conversation).where(Conversation.model_id == model.id)
+    base = select(Conversation).where(Conversation.model_id == model.id, Conversation.deleted_at.is_(None))
 
     total = await session.scalar(
         select(func.count()).select_from(base.subquery())
@@ -109,21 +198,53 @@ async def list_conversations(
     response_model=ConversationDetailResponse,
 )
 async def get_conversation_messages(
-    conversation_id: int,
-    model: RagModel = Depends(require_model_auth),
-    session: AsyncSession = Depends(get_session),
+        conversation_id: int,
+        model: RagModel = Depends(require_model_auth),
+        session: AsyncSession = Depends(get_session),
 ):
     """Get all messages for a specific conversation."""
     result = await session.execute(
         select(Conversation)
-        .where(Conversation.id == conversation_id, Conversation.model_id == model.id)
+        .where(Conversation.id == conversation_id, Conversation.model_id == model.id, Conversation.deleted_at.is_(None))
         .options(selectinload(Conversation.messages))
     )
     convo = result.scalar_one_or_none()
     if not convo:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
-    return ConversationDetailResponse.model_validate(convo)
+    # Filter out soft-deleted messages
+    convo_dict = {
+        "id": convo.id,
+        "session_id": convo.session_id,
+        "title": convo.title,
+        "message_count": convo.message_count,
+        "created_at": convo.created_at,
+        "updated_at": convo.updated_at,
+        "messages": [m for m in convo.messages if m.deleted_at is None],
+    }
+    return ConversationDetailResponse.model_validate(convo_dict)
+
+
+@router.delete(
+    "/models/{slug}/conversations/{conversation_id}",
+    status_code=204,
+)
+async def delete_conversation(
+        conversation_id: int,
+        model: RagModel = Depends(require_model_auth),
+        session: AsyncSession = Depends(get_session),
+):
+    """Soft-delete a conversation and its messages."""
+    result = await session.execute(
+        select(Conversation)
+        .where(Conversation.id == conversation_id, Conversation.model_id == model.id, Conversation.deleted_at.is_(None))
+    )
+    convo = result.scalar_one_or_none()
+    if not convo:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    convo.deleted_at = func.now()
+    await session.commit()
 
 
 @router.get(
@@ -131,9 +252,9 @@ async def get_conversation_messages(
     response_model=list[ChunkResponse],
 )
 async def get_chunks(
-    model: RagModel = Depends(require_model_auth),
-    session: AsyncSession = Depends(get_session),
-    ids: str = Query(..., description="Comma-separated chunk IDs"),
+        model: RagModel = Depends(require_model_auth),
+        session: AsyncSession = Depends(get_session),
+        ids: str = Query(..., description="Comma-separated chunk IDs"),
 ):
     """Fetch chunks by ID for a model. Used to inspect retrieved context for a conversation."""
     try:
@@ -161,8 +282,8 @@ async def get_chunks(
     response_model=list[SystemPromptHistoryResponse],
 )
 async def list_system_prompt_history(
-    model: RagModel = Depends(require_model_auth),
-    session: AsyncSession = Depends(get_session),
+        model: RagModel = Depends(require_model_auth),
+        session: AsyncSession = Depends(get_session),
 ):
     """List system prompt history, newest first."""
     result = await session.execute(
@@ -178,9 +299,9 @@ async def list_system_prompt_history(
     response_model=SystemPromptHistoryResponse,
 )
 async def rollback_system_prompt(
-    history_id: int,
-    model: RagModel = Depends(require_model_auth),
-    session: AsyncSession = Depends(get_session),
+        history_id: int,
+        model: RagModel = Depends(require_model_auth),
+        session: AsyncSession = Depends(get_session),
 ):
     """Rollback to a previous system prompt. Creates a new history entry."""
     result = await session.execute(
@@ -229,8 +350,8 @@ class GenerateSystemPromptRequest(BaseModel):
 
 @router.post("/models/{slug}/generate-system-prompt")
 async def generate_system_prompt(
-    body: GenerateSystemPromptRequest,
-    model: RagModel = Depends(require_model_auth),
+        body: GenerateSystemPromptRequest,
+        model: RagModel = Depends(require_model_auth),
 ):
     """Stream-generate a system prompt based on model info and user input."""
     user_parts = [f"Bot name: {model.name}"]
@@ -247,10 +368,10 @@ async def generate_system_prompt(
     async def stream():
         try:
             async with client.messages.stream(
-                model="claude-haiku-4-5",
-                max_tokens=1024,
-                system=_SYSTEM_PROMPT_GENERATOR,
-                messages=[{"role": "user", "content": user_message}],
+                    model="claude-haiku-4-5",
+                    max_tokens=1024,
+                    system=_SYSTEM_PROMPT_GENERATOR,
+                    messages=[{"role": "user", "content": user_message}],
             ) as response:
                 async for text in response.text_stream:
                     yield f"data: {json.dumps(text)}\n\n"
@@ -272,9 +393,9 @@ class AcceptGeneratedPromptRequest(BaseModel):
     response_model=SystemPromptHistoryResponse,
 )
 async def accept_generated_prompt(
-    body: AcceptGeneratedPromptRequest,
-    model: RagModel = Depends(require_model_auth),
-    session: AsyncSession = Depends(get_session),
+        body: AcceptGeneratedPromptRequest,
+        model: RagModel = Depends(require_model_auth),
+        session: AsyncSession = Depends(get_session),
 ):
     """Accept a generated system prompt — saves it and records history."""
     entry = SystemPromptHistory(

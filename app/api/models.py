@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -67,7 +67,7 @@ async def list_models(
     session: AsyncSession = Depends(get_session),
 ):
     """List all RAG models. Clerk users see only their own models."""
-    query = select(RagModel).order_by(RagModel.created_at)
+    query = select(RagModel).where(RagModel.deleted_at.is_(None)).order_by(RagModel.created_at)
 
     if clerk_user and not clerk_user.is_superuser:
         query = query.where(RagModel.owner_id == clerk_user.user_id)
@@ -125,8 +125,8 @@ async def delete_model(
     model: RagModel = Depends(require_model_auth),
     session: AsyncSession = Depends(get_session),
 ):
-    """Delete a RAG model and all associated data."""
-    await session.delete(model)
+    """Soft-delete a RAG model. Data is preserved but hidden from all queries."""
+    model.deleted_at = func.now()
     await session.commit()
     await sync_origins(session)
 

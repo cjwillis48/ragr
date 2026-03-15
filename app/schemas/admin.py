@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 
 from pydantic import BaseModel
 
@@ -73,6 +73,21 @@ class ConversationListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class DailyStatsEntry(BaseModel):
+    date: date
+    answered: int
+    unanswered: int
+    off_topic: int
+    tokens_in: int
+    tokens_out: int
+
+
+class TopSourceEntry(BaseModel):
+    source_identifier: str
+    retrieval_count: int
+    chunk_count: int
 
 
 class SystemPromptHistoryResponse(BaseModel):

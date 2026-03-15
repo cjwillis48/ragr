@@ -109,8 +109,8 @@ async def get_model_by_slug(
     slug: str,
     session: AsyncSession = Depends(get_session),
 ) -> RagModel:
-    """Resolve a model by slug, raising 404 if not found."""
-    result = await session.execute(select(RagModel).where(RagModel.slug == slug))
+    """Resolve a model by slug, raising 404 if not found or soft-deleted."""
+    result = await session.execute(select(RagModel).where(RagModel.slug == slug, RagModel.deleted_at.is_(None)))
     model = result.scalar_one_or_none()
     if model is None:
         raise HTTPException(status_code=404, detail="Model not found")
@@ -123,7 +123,7 @@ async def get_active_model_by_slug(
 ) -> RagModel:
     """Resolve an active model by slug, raising 404 if not found or inactive."""
     result = await session.execute(
-        select(RagModel).where(RagModel.slug == slug, RagModel.is_active.is_(True))
+        select(RagModel).where(RagModel.slug == slug, RagModel.is_active.is_(True), RagModel.deleted_at.is_(None))
     )
     model = result.scalar_one_or_none()
     if model is None:
