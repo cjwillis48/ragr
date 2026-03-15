@@ -2,6 +2,11 @@ import asyncio
 import logging
 
 import httpx
+import pymupdf  # noqa: F401 — eager import to avoid cold-start delay
+
+# Limit concurrent background ingestion tasks to avoid exhausting the DB
+# connection pool (default QueuePool size=5, overflow=10).
+_ingest_semaphore = asyncio.Semaphore(3)
 from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,12 +20,19 @@ from app.schemas.admin import PurgeResponse
 from app.schemas.sources import (
     ChunkListResponse,
     ChunkResponse,
+    ConfirmUploadRequest,
+    CrawlRequest,
+    CrawlResponse,
     CreateSourceRequest,
     CreateSourceResponse,
+    PresignedUploadRequest,
+    PresignedUploadResponse,
+    PresignedFileInfo,
     SourceListResponse,
     SourceResponse,
 )
 from app.services.ingest import ingest_content
+from app.services.r2 import is_configured as r2_is_configured
 
 router = APIRouter(tags=["sources"])
 logger = logging.getLogger("ragr.sources")
@@ -418,19 +430,31 @@ async def upload_source(
     session: AsyncSession = Depends(get_session),
 ):
     """Upload one or more files to ingest. Supports .txt, .md, .html, .pdf files. Returns 202."""
-    # Option A semantics: validate/extract all files first so 202 means every file
-    # in this request was accepted for background processing.
+    import time
+
     prepared_files: list[tuple[str, str, str]] = []
     results = []
 
+    t0 = time.monotonic()
     for file in files:
         if not file.filename:
             raise HTTPException(status_code=400, detail="Filename is required for all files")
 
         raw = await file.read()
+        t_read = time.monotonic()
         text, content_type = _extract_text(file.filename, raw)
+        t_extract = time.monotonic()
+        logger.info(
+            "upload %s: read=%.1fms extract=%.1fms size=%dKB",
+            file.filename,
+            (t_read - t0) * 1000,
+            (t_extract - t_read) * 1000,
+            len(raw) // 1024,
+        )
         prepared_files.append((file.filename, text, content_type))
+        t0 = time.monotonic()
 
+    t_db = time.monotonic()
     for filename, text, content_type in prepared_files:
         src_result = await session.execute(
             select(IngestionSource).where(
@@ -460,6 +484,7 @@ async def upload_source(
         ))
 
     await session.commit()
+    logger.info("upload db upserts: %.1fms for %d files", (time.monotonic() - t_db) * 1000, len(prepared_files))
 
     for filename, text, content_type in prepared_files:
         asyncio.create_task(
@@ -472,3 +497,220 @@ async def upload_source(
         )
 
     return results
+
+
+# ---------------------------------------------------------------------------
+# Presigned R2 upload flow
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/models/{slug}/sources/upload/presign",
+    response_model=PresignedUploadResponse,
+)
+async def presign_upload(
+    body: PresignedUploadRequest,
+    model: RagModel = Depends(require_model_auth),
+):
+    """Generate presigned R2 PUT URLs for each file. Browser uploads directly to R2."""
+    if not r2_is_configured():
+        raise HTTPException(status_code=501, detail="R2 storage is not configured")
+
+    import uuid
+    from app.services.r2 import generate_presigned_upload_url
+
+    upload_id = str(uuid.uuid4())
+    files = []
+    for f in body.files:
+        object_key = f"uploads/{model.id}/{upload_id}/{f.filename}"
+        url = generate_presigned_upload_url(object_key, f.content_type)
+        files.append(PresignedFileInfo(
+            filename=f.filename,
+            object_key=object_key,
+            upload_url=url,
+            content_type=f.content_type,
+        ))
+
+    return PresignedUploadResponse(upload_id=upload_id, files=files)
+
+
+@router.post(
+    "/models/{slug}/sources/upload/confirm",
+    response_model=list[CreateSourceResponse],
+    status_code=202,
+)
+async def confirm_upload(
+    body: ConfirmUploadRequest,
+    model: RagModel = Depends(require_model_auth),
+    session: AsyncSession = Depends(get_session),
+):
+    """Confirm files have been uploaded to R2. Triggers background ingestion."""
+    if not r2_is_configured():
+        raise HTTPException(status_code=501, detail="R2 storage is not configured")
+
+    results = []
+    for f in body.files:
+        # Validate object key belongs to this model
+        if not f.object_key.startswith(f"uploads/{model.id}/"):
+            raise HTTPException(status_code=403, detail=f"Object key does not belong to this model: {f.object_key}")
+
+        src_result = await session.execute(
+            select(IngestionSource).where(
+                IngestionSource.model_id == model.id,
+                IngestionSource.source_identifier == f.filename,
+            )
+        )
+        existing = src_result.scalar_one_or_none()
+        if existing:
+            existing.status = "pending"
+        else:
+            session.add(IngestionSource(
+                model_id=model.id,
+                source_identifier=f.filename,
+                content_hash="",
+                chunk_count=0,
+                source_url=f.filename,
+                content_type="pending",
+                status="pending",
+            ))
+
+        results.append(CreateSourceResponse(
+            source_identifier=f.filename,
+            status="pending",
+            message=f"Ingestion started for {f.filename}",
+        ))
+
+    await session.commit()
+
+    for f in body.files:
+        asyncio.create_task(
+            _ingest_r2_file_background(
+                model_id=model.id,
+                object_key=f.object_key,
+                filename=f.filename,
+            )
+        )
+
+    return results
+
+
+async def _ingest_r2_file_background(
+    model_id: int,
+    object_key: str,
+    filename: str,
+) -> None:
+    """Download file from R2, extract text, ingest, then delete from R2."""
+    from app.services.r2 import download_object, delete_object
+
+    async with _ingest_semaphore:
+        try:
+            # Download and extract text WITHOUT holding a DB connection.
+            raw = await asyncio.get_event_loop().run_in_executor(
+                None, download_object, object_key
+            )
+            text, content_type = _extract_text(filename, raw)
+
+            # Now open a session only for the DB-bound ingestion work.
+            async with async_session() as session:
+                result = await session.execute(select(RagModel).where(RagModel.id == model_id))
+                model = result.scalar_one()
+
+                await ingest_content(
+                    session=session,
+                    model=model,
+                    content=text,
+                    source_identifier=filename,
+                    content_type=content_type,
+                    source_url=filename,
+                )
+            logger.info("R2 file %s: ingested successfully", filename)
+        except Exception:
+            logger.exception("R2 file ingestion failed for %s", filename)
+            async with async_session() as err_session:
+                err_result = await err_session.execute(
+                    select(IngestionSource).where(
+                        IngestionSource.model_id == model_id,
+                        IngestionSource.source_identifier == filename,
+                    )
+                )
+                err_src = err_result.scalar_one_or_none()
+                if err_src:
+                    err_src.status = "failed"
+                    await err_session.commit()
+        finally:
+            try:
+                await asyncio.get_event_loop().run_in_executor(
+                    None, delete_object, object_key
+                )
+            except Exception:
+                logger.warning("Failed to delete R2 object %s", object_key)
+
+
+# ---------------------------------------------------------------------------
+# Site crawl
+# ---------------------------------------------------------------------------
+
+
+async def _crawl_site_background(model_id: int, crawl_request: CrawlRequest) -> None:
+    """Crawl a site and ingest all discovered pages."""
+    from app.services.crawler import crawl_site
+
+    try:
+        pages = await crawl_site(
+            root_url=crawl_request.url,
+            max_pages=crawl_request.max_pages,
+            max_depth=crawl_request.max_depth,
+            prefix=crawl_request.prefix,
+            exclude_patterns=crawl_request.exclude_patterns,
+        )
+    except Exception:
+        logger.exception("Crawl failed for %s", crawl_request.url)
+        return
+
+    for page in pages:
+        async with _ingest_semaphore:
+            async with async_session() as session:
+                result = await session.execute(select(RagModel).where(RagModel.id == model_id))
+                model = result.scalar_one()
+
+                try:
+                    await ingest_content(
+                        session=session,
+                        model=model,
+                        content=page.text,
+                        source_identifier=page.url,
+                        content_type=page.content_type,
+                        source_url=page.url,
+                    )
+                    logger.info("Crawl ingest complete: %s", page.url)
+                except Exception:
+                    logger.exception("Crawl ingest failed for %s", page.url)
+                    err_result = await session.execute(
+                        select(IngestionSource).where(
+                            IngestionSource.model_id == model_id,
+                            IngestionSource.source_identifier == page.url,
+                        )
+                    )
+                    err_src = err_result.scalar_one_or_none()
+                    if err_src:
+                        err_src.status = "failed"
+                        await session.commit()
+
+
+@router.post(
+    "/models/{slug}/sources/crawl",
+    response_model=CrawlResponse,
+    status_code=202,
+)
+async def crawl_site_endpoint(
+    body: CrawlRequest,
+    model: RagModel = Depends(require_model_auth),
+):
+    """Crawl a website and ingest all discovered pages. Runs in the background."""
+    asyncio.create_task(_crawl_site_background(model.id, body))
+
+    return CrawlResponse(
+        status="pending",
+        message=f"Crawling {body.url} (max {body.max_pages} pages, depth {body.max_depth})",
+        pages_queued=0,
+    )

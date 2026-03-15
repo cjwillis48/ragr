@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -26,22 +27,32 @@ for _handler in logging.root.handlers:
 logger = logging.getLogger("ragr")
 
 
-class _HealthCheckFilter(logging.Filter):
-    def filter(self, record: logging.LogRecord) -> bool:
-        msg = record.getMessage()
-        return "/healthz" not in msg and "/readyz" not in msg
+# Suppress uvicorn's default access logger — we log access from
+# RequestIdMiddleware instead, so every line has a consistent format.
+logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 
 
-logging.getLogger("uvicorn.access").addFilter(_HealthCheckFilter())
+async def _prefetch_jwks():
+    """Warm Clerk JWKS cache in the background so health probes aren't blocked."""
+    from app.dependencies import _get_clerk
+    clerk = _get_clerk()
+    if clerk:
+        try:
+            jwks = await asyncio.get_event_loop().run_in_executor(None, clerk.jwks.get_jwks)
+            logger.info("Clerk JWKS prefetched (%d keys)", len(jwks.keys) if jwks and jwks.keys else 0)
+        except Exception:
+            logger.warning("Failed to prefetch Clerk JWKS — first request will be slower", exc_info=True)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    if not settings.ragr_api_key:
-        raise RuntimeError("RAGR_API_KEY must be set")
+    if not settings.clerk_secret_key:
+        raise RuntimeError("CLERK_SECRET_KEY must be set")
     logger.info("RAGr starting up")
     async with async_session() as session:
         await sync_origins(session)
+    # Prefetch JWKS in background so it doesn't block health probes
+    asyncio.create_task(_prefetch_jwks())
     yield
     logger.info("RAGr shutting down")
     await engine.dispose()

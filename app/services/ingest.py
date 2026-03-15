@@ -1,7 +1,9 @@
+import asyncio
 import hashlib
 from dataclasses import dataclass
+from functools import partial
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,8 +35,11 @@ async def ingest_content(
     Idempotent: if the content hash matches the existing source, skip.
     If changed, delete old chunks and re-embed.
     """
-    hash_input = f"{content}:chunk_size={model.chunk_size}:chunk_overlap={model.chunk_overlap}"
-    content_hash = hashlib.sha256(hash_input.encode()).hexdigest()
+    def _compute_hash() -> str:
+        h = f"{content}:chunk_size={model.chunk_size}:chunk_overlap={model.chunk_overlap}"
+        return hashlib.sha256(h.encode()).hexdigest()
+
+    content_hash = await asyncio.get_event_loop().run_in_executor(None, _compute_hash)
 
     # Check for existing ingestion source
     result = await session.execute(
@@ -60,13 +65,15 @@ async def ingest_content(
             )
         )
 
-    # Chunk the content
-    chunks = chunk_text(content, model.chunk_size, model.chunk_overlap)
+    # Chunk the content (run in thread to avoid blocking the event loop)
+    chunks = await asyncio.get_event_loop().run_in_executor(
+        None, partial(chunk_text, content, model.chunk_size, model.chunk_overlap)
+    )
     if not chunks:
         return IngestResult(chunk_count=0, skipped=False, embedding_cost=0.0)
 
     # Embed all chunks
-    embed = await embed_texts(chunks, model=model.embedding_model)
+    embed = await embed_texts(chunks, model=model.embedding_model, voyage_api_key=model.custom_voyage_key)
 
     # Store chunks
     for chunk_text_str, embedding in zip(chunks, embed.embeddings):
@@ -74,6 +81,7 @@ async def ingest_content(
             model_id=model.id,
             content=chunk_text_str,
             embedding=embedding,
+            search_vector=func.to_tsvector("english", chunk_text_str),
             source_url=source_url,
             source_identifier=source_identifier,
             content_type=content_type,
@@ -92,6 +100,7 @@ async def ingest_content(
         content_type=content_type,
         status="complete",
         embedding_cost=embedding_cost,
+        raw_content=content,
     )
     stmt = stmt.on_conflict_do_update(
         constraint="uq_model_source",
@@ -102,6 +111,7 @@ async def ingest_content(
             "content_type": stmt.excluded.content_type,
             "status": stmt.excluded.status,
             "embedding_cost": stmt.excluded.embedding_cost,
+            "raw_content": stmt.excluded.raw_content,
         },
     )
     await session.execute(stmt)

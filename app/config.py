@@ -9,15 +9,21 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     voyage_api_key: str = ""
 
-    ragr_api_key: str = ""
+    encryption_key: str = ""
 
     clerk_secret_key: str = ""
     superuser_id: str = ""
     console_origins: list[str] = ["http://localhost:5173"]
 
+    r2_account_id: str = ""
+    r2_access_key_id: str = ""
+    r2_secret_access_key: str = ""
+    r2_bucket_name: str = "ragr-uploads"
+    r2_presigned_expiry: int = 3600
+
     rate_limit_per_min: int = 10
 
-    default_similarity_threshold: float = 0.5
+    default_similarity_threshold: float = 0.3
     default_chunk_size: int = 1000
     default_chunk_overlap: int = 100
     default_top_k: int = 15

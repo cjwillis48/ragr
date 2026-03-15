@@ -8,14 +8,16 @@ from app.config import settings
 
 logger = logging.getLogger("ragr.reranker")
 
-_client: voyageai.AsyncClient | None = None
+_platform_client: voyageai.AsyncClient | None = None
 
 
-def _get_client() -> voyageai.AsyncClient:
-    global _client
-    if _client is None:
-        _client = voyageai.AsyncClient(api_key=settings.voyage_api_key, timeout=30)
-    return _client
+def _get_client(api_key: str | None = None) -> voyageai.AsyncClient:
+    if api_key:
+        return voyageai.AsyncClient(api_key=api_key, timeout=30)
+    global _platform_client
+    if _platform_client is None:
+        _platform_client = voyageai.AsyncClient(api_key=settings.voyage_api_key, timeout=30)
+    return _platform_client
 
 
 @dataclass
@@ -30,9 +32,10 @@ async def rerank(
     documents: list[str],
     model: str = "rerank-2.5-lite",
     top_k: int = 5,
+    voyage_api_key: str | None = None,
 ) -> RerankResult:
     """Rerank documents by relevance to the query using Voyage AI."""
-    client = _get_client()
+    client = _get_client(voyage_api_key)
     t0 = time.perf_counter()
     result = await client.rerank(query, documents, model=model, top_k=top_k)
     logger.info(

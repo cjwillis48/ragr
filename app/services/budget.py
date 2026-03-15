@@ -95,9 +95,19 @@ async def record_usage(
     return usage
 
 
+PLATFORM_BUDGET_CAP = 10.0
+
+
 async def check_budget(session: AsyncSession, model: RagModel) -> bool:
-    """Check if a model is within budget. Returns True if OK to proceed."""
+    """Check if a model is within budget. Returns True if OK to proceed.
+
+    Models using platform API keys are hard-capped at $10/month regardless
+    of their configured budget_limit.
+    """
     usage = await get_current_month_usage(session, model)
     if usage is None:
         return True
-    return usage.estimated_cost < model.budget_limit
+    limit = model.budget_limit
+    if not model.custom_anthropic_key:
+        limit = min(limit, PLATFORM_BUDGET_CAP)
+    return usage.estimated_cost < limit

@@ -21,20 +21,22 @@ class GenerationResult:
 
 logger = logging.getLogger("ragr.generation")
 
-_client: anthropic.AsyncAnthropic | None = None
+_platform_client: anthropic.AsyncAnthropic | None = None
 
 _META_RE = re.compile(r'\s*<meta\s+status="(answered|unanswered|off_topic)"\s*/>\s*$')
 
 
-def _get_client() -> anthropic.AsyncAnthropic:
-    global _client
-    if _client is None:
-        _client = anthropic.AsyncAnthropic(
+def _get_client(api_key: str | None = None) -> anthropic.AsyncAnthropic:
+    if api_key:
+        return anthropic.AsyncAnthropic(api_key=api_key, max_retries=4, timeout=60.0)
+    global _platform_client
+    if _platform_client is None:
+        _platform_client = anthropic.AsyncAnthropic(
             api_key=settings.anthropic_api_key,
             max_retries=4,
             timeout=60.0,
         )
-    return _client
+    return _platform_client
 
 
 def _build_prompt(
@@ -112,7 +114,7 @@ async def generate_answer(
     """Generate an answer using retrieved context."""
     system, messages = _build_prompt(model, question, chunks, total_chunks, history)
 
-    client = _get_client()
+    client = _get_client(model.custom_anthropic_key)
     response = await client.messages.create(
         model=model.generation_model,
         max_tokens=512,
@@ -153,7 +155,7 @@ async def generate_answer_stream(
     """
     system, messages = _build_prompt(model, question, chunks, total_chunks, history)
 
-    client = _get_client()
+    client = _get_client(model.custom_anthropic_key)
     full_answer = ""
     input_tokens = 0
     output_tokens = 0

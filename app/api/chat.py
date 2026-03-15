@@ -12,12 +12,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
 from app.dependencies import require_chat_auth
-from app.models.conversation import ConversationLog
+from app.models.conversation import Conversation, Message
 from app.models.rag_model import RagModel
 from app.schemas.chat import ChatRequest, ChatResponse
 from app.services.budget import check_budget, estimate_cost, estimate_rerank_cost, record_usage
 from app.services.generation import GenerationResult, generate_answer, generate_answer_stream
-from app.services.retrieval import RetrievalResult, retrieve_with_threshold
+from app.services.retrieval import ChunkScore, RetrievalResult, retrieve_with_threshold
 
 router = APIRouter(tags=["chat"])
 logger = logging.getLogger("ragr.chat")
@@ -30,12 +30,13 @@ async def _load_session_history(
 ) -> list[dict]:
     """Load the last N conversation turns for a session from the DB."""
     result = await session.execute(
-        select(ConversationLog)
+        select(Message)
+        .join(Conversation, Message.conversation_id == Conversation.id)
         .where(
-            ConversationLog.model_id == model.id,
-            ConversationLog.session_id == session_id,
+            Conversation.model_id == model.id,
+            Conversation.session_id == session_id,
         )
-        .order_by(ConversationLog.created_at.desc())
+        .order_by(Message.created_at.desc())
         .limit(model.history_turns)
     )
     rows = result.scalars().all()
@@ -48,7 +49,7 @@ async def _load_session_history(
     return history
 
 
-async def _log_conversation(
+async def _log_message(
     session: AsyncSession,
     model: RagModel,
     question: str,
@@ -57,17 +58,46 @@ async def _log_conversation(
     tokens_in: int,
     tokens_out: int,
     session_id: str | None = None,
+    scores: list[ChunkScore] | None = None,
 ) -> None:
-    """Record token usage and log the conversation."""
+    """Record token usage and log the message under its conversation."""
     await record_usage(session, model, tokens_in, tokens_out)
-    session.add(ConversationLog(
+    retrieved_chunks = (
+        [{"chunk_id": s.chunk_id, "distance": s.distance, "rerank_score": s.rerank_score, "keyword_rank": s.keyword_rank, "retrieval_method": s.retrieval_method} for s in scores]
+        if scores else None
+    )
+
+    # Find or create conversation
+    effective_session_id = session_id or str(uuid.uuid4())
+    result = await session.execute(
+        select(Conversation).where(
+            Conversation.model_id == model.id,
+            Conversation.session_id == effective_session_id,
+        )
+    )
+    conversation = result.scalar_one_or_none()
+
+    if conversation is None:
+        conversation = Conversation(
+            model_id=model.id,
+            session_id=effective_session_id,
+            title=question[:80],
+            message_count=0,
+        )
+        session.add(conversation)
+        await session.flush()
+
+    conversation.message_count += 1
+
+    session.add(Message(
+        conversation_id=conversation.id,
         model_id=model.id,
-        session_id=session_id,
         question=question,
         answer=answer,
         status=status,
         tokens_in=tokens_in,
         tokens_out=tokens_out,
+        retrieved_chunks=retrieved_chunks,
     ))
     await session.commit()
 
@@ -108,7 +138,7 @@ async def chat(
 
     if body.stream:
         return StreamingResponse(
-            _stream_response(session, model, body.question, retrieval.chunks, history, session_id, rerank_cost),
+            _stream_response(session, model, body.question, retrieval.chunks, history, session_id, rerank_cost, retrieval.scores),
             media_type="text/event-stream",
         )
 
@@ -118,7 +148,7 @@ async def chat(
         if e.status_code == 529:
             raise HTTPException(status_code=503, detail="AI provider is temporarily overloaded. Please try again.")
         raise
-    await _log_conversation(session, model, body.question, result.answer, result.status, result.input_tokens, result.output_tokens, session_id)
+    await _log_message(session, model, body.question, result.answer, result.status, result.input_tokens, result.output_tokens, session_id, retrieval.scores)
 
     generation_cost = estimate_cost(model.generation_model, result.input_tokens, result.output_tokens)
 
@@ -140,12 +170,13 @@ async def _stream_response(
     history: list[dict] | None = None,
     session_id: str | None = None,
     rerank_cost: float = 0.0,
+    scores: list[ChunkScore] | None = None,
 ):
     """SSE generator. Streams text deltas, then a final done event with metadata."""
     try:
         async for event in generate_answer_stream(model, question, chunks, history=history):
             if isinstance(event, GenerationResult):
-                await _log_conversation(session, model, question, event.answer, event.status, event.input_tokens, event.output_tokens, session_id)
+                await _log_message(session, model, question, event.answer, event.status, event.input_tokens, event.output_tokens, session_id, scores)
                 generation_cost = estimate_cost(model.generation_model, event.input_tokens, event.output_tokens)
                 data = json.dumps({
                     "answer": event.answer,
