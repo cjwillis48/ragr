@@ -144,9 +144,13 @@ async def retrieve_with_threshold(
 
     t0 = time.perf_counter()
 
-    # Run both searches
+    # Run searches
     vector_rows = await _vector_search(session, model, query_embedding, threshold_distance, candidate_limit)
-    keyword_rows = await _keyword_search(session, model, query, candidate_limit)
+
+    if model.keyword_search_enabled:
+        keyword_rows = await _keyword_search(session, model, query, candidate_limit)
+    else:
+        keyword_rows = []
 
     # Merge with RRF
     chunks, distances, keyword_ranks = _rrf_merge(vector_rows, keyword_rows, candidate_limit)

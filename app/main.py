@@ -38,6 +38,15 @@ async def lifespan(app: FastAPI):
     logger.info("RAGr starting up")
     async with async_session() as session:
         await sync_origins(session)
+    # Warm Clerk JWKS cache so the first request isn't slow
+    from app.dependencies import _get_clerk
+    clerk = _get_clerk()
+    if clerk:
+        try:
+            jwks = clerk.jwks.get_jwks()
+            logger.info("Clerk JWKS prefetched (%d keys)", len(jwks.keys) if jwks and jwks.keys else 0)
+        except Exception:
+            logger.warning("Failed to prefetch Clerk JWKS — first request will be slower", exc_info=True)
     yield
     logger.info("RAGr shutting down")
     await engine.dispose()
