@@ -140,7 +140,7 @@ async def retrieve_with_threshold(
 
     candidate_limit = model.top_k
     if model.reranker_enabled:
-        candidate_limit = model.top_k * RERANK_CANDIDATE_MULTIPLIER
+        candidate_limit = model.rerank_candidates or model.top_k * RERANK_CANDIDATE_MULTIPLIER
 
     t0 = time.perf_counter()
 

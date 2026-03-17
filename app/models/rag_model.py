@@ -45,6 +45,7 @@ class RagModel(Base):
     generation_model: Mapped[str] = mapped_column(String(100), nullable=False)
     reranker_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     rerank_model: Mapped[str] = mapped_column(String(100), default="rerank-2.5-lite")
+    rerank_candidates: Mapped[int] = mapped_column(Integer, default=60)
     keyword_search_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     history_turns: Mapped[int] = mapped_column(Integer, default=10)
 
