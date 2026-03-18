@@ -1,0 +1,54 @@
+# Deny all ingress to postgres by default
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-deny-ingress
+  namespace: ragr
+spec:
+  podSelector:
+    matchLabels:
+      app: postgres
+  policyTypes:
+    - Ingress
+---
+# Allow ragr app to reach postgres
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ragr-to-postgres
+  namespace: ragr
+spec:
+  podSelector:
+    matchLabels:
+      app: postgres
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: ragr
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+# Allow pgweb to reach postgres
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-pgweb-to-postgres
+  namespace: ragr
+spec:
+  podSelector:
+    matchLabels:
+      app: postgres
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: pgweb
+      ports:
+        - protocol: TCP
+          port: 5432
