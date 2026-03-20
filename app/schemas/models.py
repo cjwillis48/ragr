@@ -32,6 +32,7 @@ class RagModelCreate(BaseModel):
     reranker_enabled: bool | None = None
     rerank_model: str | None = None
     rerank_candidates: int | None = None
+    rerank_threshold: float | None = None
     keyword_search_enabled: bool | None = None
     history_turns: int | None = None
     hosted_chat: bool | None = None
@@ -54,6 +55,7 @@ class RagModelUpdate(BaseModel):
     reranker_enabled: bool | None = None
     rerank_model: str | None = None
     rerank_candidates: int | None = None
+    rerank_threshold: float | None = None
     keyword_search_enabled: bool | None = None
     history_turns: int | None = None
     hosted_chat: bool | None = None
@@ -92,6 +94,7 @@ class RagModelRead(BaseModel):
     reranker_enabled: bool
     rerank_model: str
     rerank_candidates: int
+    rerank_threshold: float
     keyword_search_enabled: bool
     history_turns: int
     hosted_chat: bool

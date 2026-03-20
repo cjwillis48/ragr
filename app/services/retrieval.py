@@ -175,6 +175,10 @@ async def retrieve_with_threshold(
         chunks = [chunks[i] for i in rerank_result.indices]
         rerank_tokens = rerank_result.total_tokens
 
+        # Drop chunks below the rerank score threshold
+        if model.rerank_threshold and model.rerank_threshold > 0:
+            chunks = [c for c in chunks if rerank_scores.get(c.id, 0) >= model.rerank_threshold]
+
     scores = [
         ChunkScore(
             chunk_id=c.id,
