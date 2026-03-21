@@ -409,3 +409,73 @@ async def accept_generated_prompt(
     await session.commit()
     await session.refresh(entry)
     return SystemPromptHistoryResponse.model_validate(entry)
+
+
+# --- Sample Questions Generation ---
+
+_SAMPLE_QUESTIONS_GENERATOR = """You are generating sample questions for a RAG chatbot.
+
+Given the bot's name, description, system prompt, and a sample of its knowledge base content, generate 5 questions that a first-time user would likely ask. The questions should:
+- Cover different topics from the knowledge base
+- Be natural and conversational
+- Show the range of what the bot can answer
+- Be specific enough to get good answers (not generic like "tell me everything")
+
+Respond with ONLY a JSON array of strings, no explanations:
+["Question 1?", "Question 2?", "Question 3?", "Question 4?", "Question 5?"]"""
+
+
+@router.post(
+    "/models/{slug}/generate-sample-questions",
+    response_model=list[str],
+)
+async def generate_sample_questions(
+    model: RagModel = Depends(require_model_auth),
+    session: AsyncSession = Depends(get_session),
+):
+    """Generate sample questions based on the model's knowledge base."""
+    # Grab a sample of chunk content to show the LLM what the KB covers
+    result = await session.execute(
+        select(ContentChunk.content)
+        .where(ContentChunk.model_id == model.id)
+        .order_by(func.random())
+        .limit(10)
+    )
+    sample_chunks = [row[0][:500] for row in result]
+
+    user_parts = [f"Bot name: {model.name}"]
+    if model.description:
+        user_parts.append(f"Bot description: {model.description}")
+    if model.system_prompt:
+        user_parts.append(f"System prompt: {model.system_prompt}")
+    if sample_chunks:
+        user_parts.append(f"Sample knowledge base content:\n" + "\n---\n".join(sample_chunks))
+
+    user_message = "\n\n".join(user_parts)
+
+    api_key = model.custom_anthropic_key or settings.anthropic_api_key
+    client = anthropic.AsyncAnthropic(api_key=api_key, max_retries=2, timeout=30.0)
+
+    response = await client.messages.create(
+        model="claude-haiku-4-5",
+        max_tokens=512,
+        system=_SAMPLE_QUESTIONS_GENERATOR,
+        messages=[{"role": "user", "content": user_message}],
+    )
+
+    raw = response.content[0].text.strip()
+    # Strip markdown code fences if present
+    if raw.startswith("```"):
+        raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
+        if raw.endswith("```"):
+            raw = raw[:-3].strip()
+
+    try:
+        parsed = json.loads(raw)
+        # Support both {"questions": [...]} and bare [...]
+        questions = parsed if isinstance(parsed, list) else parsed.get("questions", [])
+        return [q for q in questions if isinstance(q, str)][:5]
+    except (json.JSONDecodeError, IndexError, KeyError):
+        logger.warning("Failed to parse sample questions response: %s", raw)
+
+    raise HTTPException(status_code=500, detail="Failed to generate sample questions")

@@ -15,6 +15,7 @@ class ChatTheme(BaseModel):
     bot_bubble_color: str | None = None
     font_family: str | None = None
     border_radius: int | None = None
+    show_sample_questions_in_greeting: bool | None = None
 
 
 class RagModelCreate(BaseModel):
@@ -34,6 +35,7 @@ class RagModelCreate(BaseModel):
     rerank_candidates: int | None = None
     rerank_threshold: float | None = None
     keyword_search_enabled: bool | None = None
+    sample_questions: list[str] | None = None
     history_turns: int | None = None
     hosted_chat: bool | None = None
     allowed_origins: list[str] | None = None
@@ -57,6 +59,7 @@ class RagModelUpdate(BaseModel):
     rerank_candidates: int | None = None
     rerank_threshold: float | None = None
     keyword_search_enabled: bool | None = None
+    sample_questions: list[str] | None = None
     history_turns: int | None = None
     hosted_chat: bool | None = None
     allowed_origins: list[str] | None = None
@@ -73,6 +76,7 @@ class RagModelPublic(BaseModel):
     chat_theme: ChatTheme | None = None
     allowed_origins: list[str]
     hosted_chat: bool
+    sample_questions: list[str] = []
     accepting_requests: bool = True
 
     model_config = {"from_attributes": True}
@@ -96,6 +100,7 @@ class RagModelRead(BaseModel):
     rerank_candidates: int
     rerank_threshold: float
     keyword_search_enabled: bool
+    sample_questions: list[str]
     history_turns: int
     hosted_chat: bool
     allowed_origins: list[str]
