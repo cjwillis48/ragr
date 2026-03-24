@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     default_generation_model: str = "claude-haiku-4-5"
     default_embedding_model: str = "voyage-4-lite"
     default_rerank_model: str = "rerank-2.5-lite"
+    default_max_tokens: int = 1024
 
 
 settings = Settings()

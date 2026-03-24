@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -22,7 +22,7 @@ class IngestionSource(Base):
     source_url: Mapped[str] = mapped_column(String, server_default="", nullable=False)
     content_type: Mapped[str] = mapped_column(String(32), server_default="text", nullable=False)
     status: Mapped[str] = mapped_column(String(16), server_default="complete", nullable=False)
-    embedding_cost: Mapped[float] = mapped_column(server_default="0", nullable=False)
+    embedding_cost: Mapped[float] = mapped_column(Float, server_default="0", nullable=False)
     raw_content: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     ingested_at: Mapped[datetime] = mapped_column(

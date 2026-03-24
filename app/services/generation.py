@@ -125,7 +125,7 @@ async def generate_answer(
     client = _get_client(model.custom_anthropic_key)
     response = await client.messages.create(
         model=model.generation_model,
-        max_tokens=512,
+        max_tokens=settings.default_max_tokens,
         system=system,
         messages=messages,
     )
@@ -178,7 +178,7 @@ async def generate_answer_stream(
     try:
         async with client.messages.stream(
             model=model.generation_model,
-            max_tokens=512,
+            max_tokens=settings.default_max_tokens,
             system=system,
             messages=messages,
         ) as stream:
