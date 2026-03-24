@@ -33,6 +33,7 @@ from app.schemas.sources import (
 )
 from app.services.ingest import ingest_content
 from app.services.r2 import is_configured as r2_is_configured
+from app.services.url_validation import SSRFError, validate_url
 
 router = APIRouter(tags=["sources"])
 logger = logging.getLogger("ragr.sources")
@@ -331,8 +332,16 @@ async def create_source(
             message="Content unchanged, skipped re-ingestion" if result.skipped else f"Ingested {result.chunk_count} chunks",
         )]
 
+    # Validate URLs before processing
+    url_list = body.urls if has_urls else [body.url]
+    for u in url_list:
+        try:
+            validate_url(u)
+        except SSRFError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+
     # Normalise single url into a list; source_identifier only applies to single url
-    urls = body.urls if has_urls else [body.url]
+    urls = url_list
     source_ids = [url for url in urls] if has_urls else [body.source_identifier or body.url]
 
     # Single query to find all existing sources
@@ -432,6 +441,16 @@ async def upload_source(
     """Upload one or more files to ingest. Supports .txt, .md, .html, .pdf files. Returns 202."""
     import time
 
+    from app.config import settings
+
+    max_bytes = settings.max_upload_size_mb * 1024 * 1024
+
+    if len(files) > settings.max_upload_files:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Too many files: max {settings.max_upload_files} per request",
+        )
+
     prepared_files: list[tuple[str, str, str]] = []
     results = []
 
@@ -440,7 +459,18 @@ async def upload_source(
         if not file.filename:
             raise HTTPException(status_code=400, detail="Filename is required for all files")
 
+        # Check file size before reading into memory
+        if file.size and file.size > max_bytes:
+            raise HTTPException(
+                status_code=422,
+                detail=f"File '{file.filename}' exceeds {settings.max_upload_size_mb}MB limit",
+            )
         raw = await file.read()
+        if len(raw) > max_bytes:
+            raise HTTPException(
+                status_code=422,
+                detail=f"File '{file.filename}' exceeds {settings.max_upload_size_mb}MB limit",
+            )
         t_read = time.monotonic()
         text, content_type = _extract_text(file.filename, raw)
         t_extract = time.monotonic()
@@ -707,6 +737,11 @@ async def crawl_site_endpoint(
     model: RagModel = Depends(require_model_auth),
 ):
     """Crawl a website and ingest all discovered pages. Runs in the background."""
+    try:
+        validate_url(body.url)
+    except SSRFError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
     asyncio.create_task(_crawl_site_background(model.id, body))
 
     return CrawlResponse(

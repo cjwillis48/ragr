@@ -22,17 +22,12 @@ class DynamicCORSMiddleware:
 
     For /models/{slug}/... routes, only allows origins configured on that model.
     Non-model routes (healthz, readyz, etc.) pass through with no CORS headers.
+
+    Creates a fresh CORSMiddleware per request to avoid shared-state race conditions.
     """
 
     def __init__(self, app: ASGIApp) -> None:
         self._app = app
-        self._cors = CORSMiddleware(
-            app=app,
-            allow_origins=[],
-            allow_credentials=True,
-            allow_methods=["*"],
-            allow_headers=["*"],
-        )
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] not in ("http", "websocket"):
@@ -46,13 +41,21 @@ class DynamicCORSMiddleware:
         if match:
             slug = match.group(1)
             model_origins = _origins_by_slug.get(slug, [])
-            self._cors.allow_origins = list(set(model_origins + settings.console_origins))
+            origins = list(set(model_origins + settings.console_origins))
         else:
             all_origins = {o for origins in _origins_by_slug.values() for o in origins}
             all_origins.update(settings.console_origins)
-            self._cors.allow_origins = list(all_origins)
+            origins = list(all_origins)
 
-        await self._cors(scope, receive, send)
+        # Construct a fresh CORSMiddleware per request — no shared mutable state
+        cors = CORSMiddleware(
+            app=self._app,
+            allow_origins=origins,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+        await cors(scope, receive, send)
 
 
 async def sync_origins(session: AsyncSession) -> None:

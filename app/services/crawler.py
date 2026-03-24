@@ -8,6 +8,8 @@ from urllib.parse import urljoin, urlparse
 import httpx
 from bs4 import BeautifulSoup
 
+from app.services.url_validation import SSRFError, validate_url
+
 logger = logging.getLogger("ragr.crawler")
 
 
@@ -63,11 +65,10 @@ async def crawl_site(
 
     Returns list of CrawledPage results.
     """
+    validate_url(root_url)
+
     parsed_root = urlparse(root_url)
     domain = parsed_root.netloc
-    if prefix is None and parsed_root.path and parsed_root.path != "/":
-        # Auto-scope to the root URL's path prefix
-        prefix = None  # Don't auto-restrict, let user opt in
 
     visited: set[str] = set()
     queue: deque[tuple[str, int]] = deque()
@@ -85,6 +86,12 @@ async def crawl_site(
 
             # Check exclude patterns
             if any(pattern in url for pattern in excludes):
+                continue
+
+            try:
+                validate_url(url)
+            except SSRFError:
+                logger.warning("Blocked SSRF attempt: %s, skipping", url)
                 continue
 
             try:

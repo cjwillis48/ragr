@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     r2_presigned_expiry: int = 3600
 
     rate_limit_per_min: int = 10
+    max_upload_size_mb: int = 50
+    max_upload_files: int = 20
 
     default_similarity_threshold: float = 0.3
     default_chunk_size: int = 1000

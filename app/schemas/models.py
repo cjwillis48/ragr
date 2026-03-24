@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class ChatTheme(BaseModel):
@@ -16,6 +16,32 @@ class ChatTheme(BaseModel):
     font_family: str | None = None
     border_radius: int | None = None
     show_sample_questions_in_greeting: bool | None = None
+
+
+# Supported embedding models and their vector dimensions.
+# The DB column is Vector(1024), so only 1024-dim models are allowed.
+SUPPORTED_EMBEDDING_MODELS: dict[str, int] = {
+    "voyage-4-lite": 1024,
+    "voyage-4": 1024,
+    "voyage-3": 1024,
+    "voyage-3-lite": 512,
+    "voyage-3-large": 1024,
+    "voyage-code-3": 1024,
+}
+
+ALLOWED_EMBEDDING_MODELS = {k for k, v in SUPPORTED_EMBEDDING_MODELS.items() if v == 1024}
+
+
+def _validate_embedding_model(model_name: str | None) -> str | None:
+    if model_name is None:
+        return None
+    if model_name not in ALLOWED_EMBEDDING_MODELS:
+        allowed = ", ".join(sorted(ALLOWED_EMBEDDING_MODELS))
+        raise ValueError(
+            f"Unsupported embedding model '{model_name}'. "
+            f"Allowed models (1024-dim): {allowed}"
+        )
+    return model_name
 
 
 class RagModelCreate(BaseModel):
@@ -43,11 +69,17 @@ class RagModelCreate(BaseModel):
     custom_anthropic_key: str | None = None
     custom_voyage_key: str | None = None
 
+    @model_validator(mode="after")
+    def validate_embedding_model(self):
+        _validate_embedding_model(self.embedding_model)
+        return self
+
 
 class RagModelUpdate(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=255)
     description: str | None = None
     system_prompt: str | None = None
+    chat_theme: ChatTheme | None = None
     chunk_size: int | None = None
     chunk_overlap: int | None = None
     similarity_threshold: float | None = None
@@ -67,6 +99,11 @@ class RagModelUpdate(BaseModel):
     is_active: bool | None = None
     custom_anthropic_key: str | None = None
     custom_voyage_key: str | None = None
+
+    @model_validator(mode="after")
+    def validate_embedding_model(self):
+        _validate_embedding_model(self.embedding_model)
+        return self
 
 
 class RagModelPublic(BaseModel):

@@ -39,7 +39,7 @@ async def ingest_content(
         h = f"{content}:chunk_size={model.chunk_size}:chunk_overlap={model.chunk_overlap}"
         return hashlib.sha256(h.encode()).hexdigest()
 
-    content_hash = await asyncio.get_event_loop().run_in_executor(None, _compute_hash)
+    content_hash = _compute_hash()
 
     # Check for existing ingestion source
     result = await session.execute(
@@ -56,65 +56,69 @@ async def ingest_content(
             await session.commit()
         return IngestResult(chunk_count=existing.chunk_count, skipped=True, embedding_cost=0.0)
 
-    # If source exists but hash changed, delete old chunks
-    if existing:
-        await session.execute(
-            delete(ContentChunk).where(
-                ContentChunk.model_id == model.id,
-                ContentChunk.source_identifier == source_identifier,
+    try:
+        # If source exists but hash changed, delete old chunks
+        if existing:
+            await session.execute(
+                delete(ContentChunk).where(
+                    ContentChunk.model_id == model.id,
+                    ContentChunk.source_identifier == source_identifier,
+                )
             )
+
+        # Chunk the content (run in thread to avoid blocking the event loop)
+        chunks = await asyncio.get_running_loop().run_in_executor(
+            None, partial(chunk_text, content, model.chunk_size, model.chunk_overlap)
         )
+        if not chunks:
+            return IngestResult(chunk_count=0, skipped=False, embedding_cost=0.0)
 
-    # Chunk the content (run in thread to avoid blocking the event loop)
-    chunks = await asyncio.get_event_loop().run_in_executor(
-        None, partial(chunk_text, content, model.chunk_size, model.chunk_overlap)
-    )
-    if not chunks:
-        return IngestResult(chunk_count=0, skipped=False, embedding_cost=0.0)
+        # Embed all chunks
+        embed = await embed_texts(chunks, model=model.embedding_model, voyage_api_key=model.custom_voyage_key)
 
-    # Embed all chunks
-    embed = await embed_texts(chunks, model=model.embedding_model, voyage_api_key=model.custom_voyage_key)
+        # Store chunks
+        for chunk_text_str, embedding in zip(chunks, embed.embeddings):
+            chunk = ContentChunk(
+                model_id=model.id,
+                content=chunk_text_str,
+                embedding=embedding,
+                search_vector=func.to_tsvector("english", chunk_text_str),
+                source_url=source_url,
+                source_identifier=source_identifier,
+                content_type=content_type,
+            )
+            session.add(chunk)
 
-    # Store chunks
-    for chunk_text_str, embedding in zip(chunks, embed.embeddings):
-        chunk = ContentChunk(
+        # Upsert ingestion source (handles race with pending row from upload endpoint)
+        embedding_cost = estimate_embedding_cost(model.embedding_model, embed.total_tokens)
+
+        stmt = pg_insert(IngestionSource).values(
             model_id=model.id,
-            content=chunk_text_str,
-            embedding=embedding,
-            search_vector=func.to_tsvector("english", chunk_text_str),
-            source_url=source_url,
             source_identifier=source_identifier,
+            content_hash=content_hash,
+            chunk_count=len(chunks),
+            source_url=source_url,
             content_type=content_type,
+            status="complete",
+            embedding_cost=embedding_cost,
+            raw_content=content,
         )
-        session.add(chunk)
-
-    # Upsert ingestion source (handles race with pending row from upload endpoint)
-    embedding_cost = estimate_embedding_cost(model.embedding_model, embed.total_tokens)
-
-    stmt = pg_insert(IngestionSource).values(
-        model_id=model.id,
-        source_identifier=source_identifier,
-        content_hash=content_hash,
-        chunk_count=len(chunks),
-        source_url=source_url,
-        content_type=content_type,
-        status="complete",
-        embedding_cost=embedding_cost,
-        raw_content=content,
-    )
-    stmt = stmt.on_conflict_do_update(
-        constraint="uq_model_source",
-        set_={
-            "content_hash": stmt.excluded.content_hash,
-            "chunk_count": stmt.excluded.chunk_count,
-            "source_url": stmt.excluded.source_url,
-            "content_type": stmt.excluded.content_type,
-            "status": stmt.excluded.status,
-            "embedding_cost": stmt.excluded.embedding_cost,
-            "raw_content": stmt.excluded.raw_content,
-        },
-    )
-    await session.execute(stmt)
-    await session.commit()
+        stmt = stmt.on_conflict_do_update(
+            constraint="uq_model_source",
+            set_={
+                "content_hash": stmt.excluded.content_hash,
+                "chunk_count": stmt.excluded.chunk_count,
+                "source_url": stmt.excluded.source_url,
+                "content_type": stmt.excluded.content_type,
+                "status": stmt.excluded.status,
+                "embedding_cost": stmt.excluded.embedding_cost,
+                "raw_content": stmt.excluded.raw_content,
+            },
+        )
+        await session.execute(stmt)
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
 
     return IngestResult(chunk_count=len(chunks), skipped=False, embedding_cost=embedding_cost)
