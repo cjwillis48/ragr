@@ -14,7 +14,7 @@ _background_tasks: set[asyncio.Task] = set()
 
 def _track_task(coro, *, name: str | None = None) -> asyncio.Task:
     """Create a tracked background task with automatic cleanup and error logging."""
-    task = _track_task(coro, name=name)
+    task = asyncio.create_task(coro, name=name)
     _background_tasks.add(task)
 
     def _done_callback(t: asyncio.Task) -> None:
