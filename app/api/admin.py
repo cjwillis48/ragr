@@ -421,14 +421,14 @@ async def accept_generated_prompt(
 
 _SAMPLE_QUESTIONS_GENERATOR = """You are generating sample questions for a RAG chatbot.
 
-Given the bot's name, description, system prompt, and a sample of its knowledge base content, generate 5 questions that a first-time user would likely ask. The questions should:
+Given the bot's name, description, system prompt, and a sample of its knowledge base content, generate 3 questions that a first-time user would likely ask. The questions should:
 - Cover different topics from the knowledge base
 - Be natural and conversational
 - Show the range of what the bot can answer
 - Be specific enough to get good answers (not generic like "tell me everything")
 
 Respond with ONLY a JSON array of strings, no explanations:
-["Question 1?", "Question 2?", "Question 3?", "Question 4?", "Question 5?"]"""
+["Question 1?", "Question 2?", "Question 3?"]"""
 
 
 @router.post(
@@ -480,7 +480,7 @@ async def generate_sample_questions(
         parsed = json.loads(raw)
         # Support both {"questions": [...]} and bare [...]
         questions = parsed if isinstance(parsed, list) else parsed.get("questions", [])
-        return [q for q in questions if isinstance(q, str)][:5]
+        return [q for q in questions if isinstance(q, str)][:3]
     except (json.JSONDecodeError, IndexError, KeyError):
         logger.warning("Failed to parse sample questions response: %s", raw)
 
