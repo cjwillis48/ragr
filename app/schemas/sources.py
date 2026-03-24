@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class SourceResponse(BaseModel):
@@ -39,6 +39,15 @@ class ChunkListResponse(BaseModel):
     total: int
 
 
+def _validate_http_url(url: str) -> str:
+    """Validate that a URL uses http or https scheme."""
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise ValueError(f"Invalid URL '{url}': only http/https URLs are allowed")
+    return url
+
+
 class CreateSourceRequest(BaseModel):
     """Unified source creation request. Provide content, url, or urls."""
     source_identifier: str | None = None
@@ -47,6 +56,21 @@ class CreateSourceRequest(BaseModel):
     urls: list[str] | None = None
     content_type: str = "text"
     source_url: str = ""
+
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, v: str | None) -> str | None:
+        if v is not None:
+            _validate_http_url(v)
+        return v
+
+    @field_validator("urls")
+    @classmethod
+    def validate_urls(cls, v: list[str] | None) -> list[str] | None:
+        if v is not None:
+            for url in v:
+                _validate_http_url(url)
+        return v
 
 
 class CreateSourceResponse(BaseModel):
@@ -94,6 +118,11 @@ class CrawlRequest(BaseModel):
     max_depth: int = Field(3, ge=1, le=5)
     prefix: str | None = None
     exclude_patterns: list[str] | None = None
+
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, v: str) -> str:
+        return _validate_http_url(v)
 
 
 class CrawlResponse(BaseModel):

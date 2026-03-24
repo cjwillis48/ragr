@@ -7,6 +7,26 @@ import pymupdf  # noqa: F401 — eager import to avoid cold-start delay
 # Limit concurrent background ingestion tasks to avoid exhausting the DB
 # connection pool (default QueuePool size=5, overflow=10).
 _ingest_semaphore = asyncio.Semaphore(3)
+
+# Track background tasks to prevent silent GC and log unhandled exceptions
+_background_tasks: set[asyncio.Task] = set()
+
+
+def _track_task(coro, *, name: str | None = None) -> asyncio.Task:
+    """Create a tracked background task with automatic cleanup and error logging."""
+    task = _track_task(coro, name=name)
+    _background_tasks.add(task)
+
+    def _done_callback(t: asyncio.Task) -> None:
+        _background_tasks.discard(t)
+        if t.cancelled():
+            return
+        exc = t.exception()
+        if exc:
+            logger.error("Background task %s failed: %s", t.get_name(), exc, exc_info=exc)
+
+    task.add_done_callback(_done_callback)
+    return task
 from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -179,7 +199,7 @@ async def purge_sources(
 
 async def _ingest_url_background(model_id: int, url: str, source_identifier: str) -> None:
     """Fetch a URL server-side, strip HTML, and ingest."""
-    async with async_session() as session:
+    async with _ingest_semaphore, async_session() as session:
         result = await session.execute(select(RagModel).where(RagModel.id == model_id))
         model = result.scalar_one()
 
@@ -248,7 +268,7 @@ async def _ingest_file_background_with_status(
     content_type: str,
 ) -> None:
     """Run file ingestion in the background, updating status on completion."""
-    async with async_session() as session:
+    async with _ingest_semaphore, async_session() as session:
         from app.models.rag_model import RagModel
 
         result = await session.execute(select(RagModel).where(RagModel.id == model_id))
@@ -382,7 +402,7 @@ async def create_source(
 
     # Fire background tasks after commit so they don't contend with the response
     for url, source_id in task_args:
-        asyncio.create_task(
+        _track_task(
             _ingest_url_background(
                 model_id=model.id,
                 url=url,
@@ -517,7 +537,7 @@ async def upload_source(
     logger.info("upload db upserts: %.1fms for %d files", (time.monotonic() - t_db) * 1000, len(prepared_files))
 
     for filename, text, content_type in prepared_files:
-        asyncio.create_task(
+        _track_task(
             _ingest_file_background_with_status(
                 model_id=model.id,
                 text=text,
@@ -553,7 +573,7 @@ async def presign_upload(
     files = []
     for f in body.files:
         object_key = f"uploads/{model.id}/{upload_id}/{f.filename}"
-        url = generate_presigned_upload_url(object_key, f.content_type)
+        url = await generate_presigned_upload_url(object_key, f.content_type)
         files.append(PresignedFileInfo(
             filename=f.filename,
             object_key=object_key,
@@ -613,7 +633,7 @@ async def confirm_upload(
     await session.commit()
 
     for f in body.files:
-        asyncio.create_task(
+        _track_task(
             _ingest_r2_file_background(
                 model_id=model.id,
                 object_key=f.object_key,
@@ -635,9 +655,7 @@ async def _ingest_r2_file_background(
     async with _ingest_semaphore:
         try:
             # Download and extract text WITHOUT holding a DB connection.
-            raw = await asyncio.get_event_loop().run_in_executor(
-                None, download_object, object_key
-            )
+            raw = await download_object(object_key)
             text, content_type = _extract_text(filename, raw)
 
             # Now open a session only for the DB-bound ingestion work.
@@ -669,9 +687,7 @@ async def _ingest_r2_file_background(
                     await err_session.commit()
         finally:
             try:
-                await asyncio.get_event_loop().run_in_executor(
-                    None, delete_object, object_key
-                )
+                await delete_object(object_key)
             except Exception:
                 logger.warning("Failed to delete R2 object %s", object_key)
 
@@ -742,7 +758,7 @@ async def crawl_site_endpoint(
     except SSRFError as e:
         raise HTTPException(status_code=422, detail=str(e))
 
-    asyncio.create_task(_crawl_site_background(model.id, body))
+    _track_task(_crawl_site_background(model.id, body))
 
     return CrawlResponse(
         status="pending",

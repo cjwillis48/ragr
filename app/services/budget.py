@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.rag_model import RagModel
@@ -72,26 +73,34 @@ async def record_usage(
     input_tokens: int,
     output_tokens: int,
 ) -> TokenUsage:
-    """Record token usage for the current month."""
+    """Record token usage for the current month.
+
+    Uses INSERT ... ON CONFLICT DO UPDATE for atomic increment,
+    avoiding TOCTOU race conditions under concurrent requests.
+    """
     month = datetime.now(timezone.utc).strftime("%Y-%m")
     cost = estimate_cost(model.generation_model, input_tokens, output_tokens)
 
-    usage = await get_current_month_usage(session, model)
-    if usage is None:
-        usage = TokenUsage(
-            model_id=model.id,
-            month=month,
-            total_input_tokens=input_tokens,
-            total_output_tokens=output_tokens,
-            estimated_cost=cost,
-        )
-        session.add(usage)
-    else:
-        usage.total_input_tokens += input_tokens
-        usage.total_output_tokens += output_tokens
-        usage.estimated_cost += cost
-
+    stmt = pg_insert(TokenUsage).values(
+        model_id=model.id,
+        month=month,
+        total_input_tokens=input_tokens,
+        total_output_tokens=output_tokens,
+        estimated_cost=cost,
+    )
+    stmt = stmt.on_conflict_do_update(
+        constraint="uq_model_month",
+        set_={
+            "total_input_tokens": TokenUsage.total_input_tokens + stmt.excluded.total_input_tokens,
+            "total_output_tokens": TokenUsage.total_output_tokens + stmt.excluded.total_output_tokens,
+            "estimated_cost": TokenUsage.estimated_cost + stmt.excluded.estimated_cost,
+        },
+    )
+    await session.execute(stmt)
     await session.flush()
+
+    # Return the updated row
+    usage = await get_current_month_usage(session, model)
     return usage
 
 

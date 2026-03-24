@@ -5,13 +5,17 @@ import uuid
 
 import anthropic
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_session
+from app.config import settings
+from app.database import async_session, get_session
 from app.dependencies import require_chat_auth
+from app.services.rate_limit import RateLimiter
+
+_chat_limiter = RateLimiter(max_requests=settings.rate_limit_per_min, window_seconds=60)
 from app.models.conversation import Conversation, Message
 from app.models.rag_model import RagModel
 from app.schemas.chat import ChatRequest, ChatResponse
@@ -105,10 +109,16 @@ async def _log_message(
 @router.post("/models/{slug}/chat")
 async def chat(
     body: ChatRequest,
+    request: Request,
     model: RagModel = Depends(require_chat_auth),
     session: AsyncSession = Depends(get_session),
 ):
     """Query a model — public endpoint. Set stream: true for SSE."""
+    client_ip = request.client.host if request.client else "unknown"
+    rate_key = f"{model.id}:{client_ip}"
+    if not _chat_limiter.is_allowed(rate_key):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded. Please wait before trying again.")
+
     if not await check_budget(session, model):
         raise HTTPException(status_code=429, detail="Model has exceeded its monthly budget")
 
@@ -138,7 +148,7 @@ async def chat(
 
     if body.stream:
         return StreamingResponse(
-            _stream_response(session, model, body.question, retrieval.chunks, history, session_id, rerank_cost, retrieval.scores),
+            _stream_response(model.id, body.question, retrieval.chunks, history, session_id, rerank_cost, retrieval.scores),
             media_type="text/event-stream",
         )
 
@@ -163,8 +173,7 @@ async def chat(
 
 
 async def _stream_response(
-    session: AsyncSession,
-    model: RagModel,
+    model_id: int,
     question: str,
     chunks: list,
     history: list[dict] | None = None,
@@ -172,23 +181,32 @@ async def _stream_response(
     rerank_cost: float = 0.0,
     scores: list[ChunkScore] | None = None,
 ):
-    """SSE generator. Streams text deltas, then a final done event with metadata."""
+    """SSE generator. Streams text deltas, then a final done event with metadata.
+
+    Opens its own DB session since the dependency-injected session may close
+    before the stream finishes.
+    """
     try:
-        async for event in generate_answer_stream(model, question, chunks, history=history):
-            if isinstance(event, GenerationResult):
-                await _log_message(session, model, question, event.answer, event.status, event.input_tokens, event.output_tokens, session_id, scores)
-                generation_cost = estimate_cost(model.generation_model, event.input_tokens, event.output_tokens)
-                data = json.dumps({
-                    "answer": event.answer,
-                    "status": event.status,
-                    "session_id": session_id,
-                    "tokens_in": event.input_tokens,
-                    "tokens_out": event.output_tokens,
-                    "cost": f"${generation_cost + rerank_cost:.6f}",
-                })
-                yield f"event: done\ndata: {data}\n\n"
-            else:
-                yield f"data: {json.dumps(event)}\n\n"
+        # Load a fresh model reference in our own session
+        async with async_session() as stream_session:
+            result = await stream_session.execute(select(RagModel).where(RagModel.id == model_id))
+            model = result.scalar_one()
+
+            async for event in generate_answer_stream(model, question, chunks, history=history):
+                if isinstance(event, GenerationResult):
+                    await _log_message(stream_session, model, question, event.answer, event.status, event.input_tokens, event.output_tokens, session_id, scores)
+                    generation_cost = estimate_cost(model.generation_model, event.input_tokens, event.output_tokens)
+                    data = json.dumps({
+                        "answer": event.answer,
+                        "status": event.status,
+                        "session_id": session_id,
+                        "tokens_in": event.input_tokens,
+                        "tokens_out": event.output_tokens,
+                        "cost": f"${generation_cost + rerank_cost:.6f}",
+                    })
+                    yield f"event: done\ndata: {data}\n\n"
+                else:
+                    yield f"data: {json.dumps(event)}\n\n"
     except anthropic.APIStatusError as e:
         if e.status_code == 529:
             error = json.dumps({"error": "AI provider is temporarily overloaded. Please try again."})
@@ -196,6 +214,6 @@ async def _stream_response(
             error = json.dumps({"error": f"AI provider error ({e.status_code}). Please try again."})
         yield f"event: error\ndata: {error}\n\n"
     except Exception:
-        logger.exception("Unhandled error in stream for model_id=%s", model.id)
+        logger.exception("Unhandled error in stream for model_id=%s", model_id)
         error = json.dumps({"error": "An unexpected error occurred. Please try again."})
         yield f"event: error\ndata: {error}\n\n"

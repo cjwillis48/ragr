@@ -31,6 +31,12 @@ SUPPORTED_EMBEDDING_MODELS: dict[str, int] = {
 
 ALLOWED_EMBEDDING_MODELS = {k for k, v in SUPPORTED_EMBEDDING_MODELS.items() if v == 1024}
 
+ALLOWED_GENERATION_MODELS = {
+    "claude-haiku-4-5",
+    "claude-sonnet-4-5",
+    "claude-opus-4",
+}
+
 
 def _validate_embedding_model(model_name: str | None) -> str | None:
     if model_name is None:
@@ -40,6 +46,18 @@ def _validate_embedding_model(model_name: str | None) -> str | None:
         raise ValueError(
             f"Unsupported embedding model '{model_name}'. "
             f"Allowed models (1024-dim): {allowed}"
+        )
+    return model_name
+
+
+def _validate_generation_model(model_name: str | None) -> str | None:
+    if model_name is None:
+        return None
+    if model_name not in ALLOWED_GENERATION_MODELS:
+        allowed = ", ".join(sorted(ALLOWED_GENERATION_MODELS))
+        raise ValueError(
+            f"Unsupported generation model '{model_name}'. "
+            f"Allowed models: {allowed}"
         )
     return model_name
 
@@ -70,8 +88,9 @@ class RagModelCreate(BaseModel):
     custom_voyage_key: str | None = None
 
     @model_validator(mode="after")
-    def validate_embedding_model(self):
+    def validate_models(self):
         _validate_embedding_model(self.embedding_model)
+        _validate_generation_model(self.generation_model)
         return self
 
 
@@ -101,8 +120,9 @@ class RagModelUpdate(BaseModel):
     custom_voyage_key: str | None = None
 
     @model_validator(mode="after")
-    def validate_embedding_model(self):
+    def validate_models(self):
         _validate_embedding_model(self.embedding_model)
+        _validate_generation_model(self.generation_model)
         return self
 
 
