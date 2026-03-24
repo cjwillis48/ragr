@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from urllib.parse import urlparse
 
 import httpx
 import pymupdf  # noqa: F401 — eager import to avoid cold-start delay
@@ -55,7 +56,7 @@ from app.schemas.sources import (
 )
 from app.services.ingest import ingest_content
 from app.services.r2 import is_configured as r2_is_configured
-from app.services.url_validation import SSRFError, validate_url
+from app.services.url_validation import SSRFError, check_response_ip, validate_url
 
 router = APIRouter(tags=["sources"])
 logger = logging.getLogger("ragr.sources")
@@ -227,6 +228,14 @@ async def _ingest_url_background(model_id: int, url: str, source_identifier: str
             async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
                 resp = await client.get(url)
                 resp.raise_for_status()
+
+                # Re-validate the actual connected IP to defeat DNS rebinding
+                peer = resp.extensions.get("network_stream")
+                if peer and hasattr(peer, "get_extra_info"):
+                    peername = peer.get_extra_info("peername")
+                    if peername:
+                        check_response_ip(peername[0], hostname=urlparse(url).hostname or "unknown")
+
                 content_type_header = resp.headers.get("content-type", "")
                 raw_text = resp.text
 
@@ -364,7 +373,7 @@ async def create_source(
     url_list = body.urls if has_urls else [body.url]
     for u in url_list:
         try:
-            validate_url(u)
+            validate_url(u)  # returns (url, resolved_ips); we just need the validation
         except SSRFError as e:
             raise HTTPException(status_code=422, detail=str(e))
 
@@ -608,6 +617,9 @@ async def confirm_upload(
 
     results = []
     for f in body.files:
+        # Reject path traversal attempts
+        if ".." in f.object_key:
+            raise HTTPException(status_code=422, detail=f"Invalid object key: {f.object_key}")
         # Validate object key belongs to this model
         if not f.object_key.startswith(f"uploads/{model.id}/"):
             raise HTTPException(status_code=403, detail=f"Object key does not belong to this model: {f.object_key}")
@@ -762,7 +774,7 @@ async def crawl_site_endpoint(
 ):
     """Crawl a website and ingest all discovered pages. Runs in the background."""
     try:
-        validate_url(body.url)
+        validate_url(body.url)  # validates and returns (url, ips)
     except SSRFError as e:
         raise HTTPException(status_code=422, detail=str(e))
 

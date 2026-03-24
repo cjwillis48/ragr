@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import re
 import time
@@ -25,18 +26,20 @@ _platform_client: anthropic.AsyncAnthropic | None = None
 
 _META_RE = re.compile(r'\s*<meta\s+status="(answered|unanswered|off_topic)"\s*/>\s*$')
 
-
-from functools import lru_cache
-
-
-@lru_cache(maxsize=16)
-def _cached_client(api_key: str) -> anthropic.AsyncAnthropic:
-    return anthropic.AsyncAnthropic(api_key=api_key, max_retries=4, timeout=60.0)
+# TTL cache for custom-key clients: hash(key) -> (client, created_at)
+_client_cache: dict[str, tuple[anthropic.AsyncAnthropic, float]] = {}
+_CLIENT_TTL = 300  # 5 minutes
 
 
 def _get_client(api_key: str | None = None) -> anthropic.AsyncAnthropic:
     if api_key:
-        return _cached_client(api_key)
+        key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+        entry = _client_cache.get(key_hash)
+        if entry and (time.monotonic() - entry[1]) < _CLIENT_TTL:
+            return entry[0]
+        client = anthropic.AsyncAnthropic(api_key=api_key, max_retries=4, timeout=60.0)
+        _client_cache[key_hash] = (client, time.monotonic())
+        return client
     global _platform_client
     if _platform_client is None:
         _platform_client = anthropic.AsyncAnthropic(

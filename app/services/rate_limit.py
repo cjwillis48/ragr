@@ -21,6 +21,10 @@ class RateLimiter:
         timestamps = self._requests[key]
         self._requests[key] = [t for t in timestamps if t > cutoff]
 
+        if not self._requests[key]:
+            del self._requests[key]
+            return True
+
         if len(self._requests[key]) >= self._max:
             return False
 

@@ -8,7 +8,7 @@ from urllib.parse import urljoin, urlparse
 import httpx
 from bs4 import BeautifulSoup
 
-from app.services.url_validation import SSRFError, validate_url
+from app.services.url_validation import SSRFError, check_response_ip, validate_url
 
 logger = logging.getLogger("ragr.crawler")
 
@@ -65,7 +65,7 @@ async def crawl_site(
 
     Returns list of CrawledPage results.
     """
-    validate_url(root_url)
+    validate_url(root_url)  # validates and returns (url, ips); we just need the check
 
     parsed_root = urlparse(root_url)
     domain = parsed_root.netloc
@@ -97,6 +97,15 @@ async def crawl_site(
             try:
                 resp = await client.get(url)
                 resp.raise_for_status()
+                # Re-validate actual connected IP to defeat DNS rebinding
+                peer = resp.extensions.get("network_stream")
+                if peer and hasattr(peer, "get_extra_info"):
+                    peername = peer.get_extra_info("peername")
+                    if peername:
+                        check_response_ip(peername[0], hostname=urlparse(url).hostname or "unknown")
+            except SSRFError:
+                logger.warning("Post-fetch SSRF check failed for %s, skipping", url)
+                continue
             except Exception:
                 logger.warning("Failed to fetch %s, skipping", url)
                 continue

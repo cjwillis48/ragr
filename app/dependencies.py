@@ -109,7 +109,7 @@ async def get_model_by_slug(
     slug: str,
     session: AsyncSession = Depends(get_session),
 ) -> RagModel:
-    """Resolve a model by slug, raising 404 if not found or soft-deleted."""
+    """Resolve a model by slug, raising 404 if not found or deleted."""
     result = await session.execute(select(RagModel).where(RagModel.slug == slug, RagModel.deleted_at.is_(None)))
     model = result.scalar_one_or_none()
     if model is None:
@@ -145,18 +145,6 @@ async def get_clerk_user(
     if user is None:
         raise HTTPException(status_code=401, detail="Authentication required")
     return user
-
-
-async def require_api_key(
-    request: Request,
-    authorization: str = Header(...),
-) -> ClerkUser:
-    """Admin-level auth for model CRUD. Requires Clerk JWT."""
-    clerk_user = await _verify_clerk_token(request)
-    if clerk_user is not None:
-        return clerk_user
-
-    raise HTTPException(status_code=401, detail="Authentication required")
 
 
 async def require_model_auth(

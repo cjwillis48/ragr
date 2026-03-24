@@ -40,12 +40,13 @@ async def model_stats(
     )
 
     convo_count = await session.scalar(
-        select(func.count()).select_from(Conversation).where(Conversation.model_id == model.id,
-                                                             Conversation.deleted_at.is_(None))
+        select(func.count()).select_from(Conversation).where(
+            Conversation.model_id == model.id, Conversation.deleted_at.is_(None))
     )
 
     message_count = await session.scalar(
-        select(func.count()).select_from(Message).where(Message.model_id == model.id, Message.deleted_at.is_(None))
+        select(func.count()).select_from(Message).where(
+            Message.model_id == model.id, Message.deleted_at.is_(None))
     )
 
     unanswered = await session.scalar(
@@ -244,7 +245,6 @@ async def delete_conversation(
         raise HTTPException(status_code=404, detail="Conversation not found")
 
     convo.deleted_at = func.now()
-    # Also soft-delete associated messages
     await session.execute(
         update(Message)
         .where(Message.conversation_id == convo.id, Message.deleted_at.is_(None))

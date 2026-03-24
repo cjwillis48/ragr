@@ -35,6 +35,12 @@ logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 async def lifespan(app: FastAPI):
     if not settings.clerk_secret_key:
         raise RuntimeError("CLERK_SECRET_KEY must be set")
+    if settings.encryption_key:
+        try:
+            from cryptography.fernet import Fernet
+            Fernet(settings.encryption_key.encode())
+        except Exception as exc:
+            raise RuntimeError(f"ENCRYPTION_KEY is invalid: {exc}") from exc
     logger.info("RAGr starting up")
     async with async_session() as session:
         await sync_origins(session)

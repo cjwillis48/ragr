@@ -23,11 +23,27 @@ class DynamicCORSMiddleware:
     For /models/{slug}/... routes, only allows origins configured on that model.
     Non-model routes (healthz, readyz, etc.) pass through with no CORS headers.
 
-    Creates a fresh CORSMiddleware per request to avoid shared-state race conditions.
+    Caches CORSMiddleware instances by frozen origin set to avoid per-request construction.
     """
 
     def __init__(self, app: ASGIApp) -> None:
         self._app = app
+        self._cache: dict[frozenset[str], CORSMiddleware] = {}
+
+    def _get_cors(self, origins: list[str]) -> CORSMiddleware:
+        key = frozenset(origins)
+        cached = self._cache.get(key)
+        if cached is not None:
+            return cached
+        cors = CORSMiddleware(
+            app=self._app,
+            allow_origins=origins,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+        self._cache[key] = cors
+        return cors
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] not in ("http", "websocket"):
@@ -47,21 +63,17 @@ class DynamicCORSMiddleware:
             all_origins.update(settings.console_origins)
             origins = list(all_origins)
 
-        # Construct a fresh CORSMiddleware per request — no shared mutable state
-        cors = CORSMiddleware(
-            app=self._app,
-            allow_origins=origins,
-            allow_credentials=True,
-            allow_methods=["*"],
-            allow_headers=["*"],
-        )
+        cors = self._get_cors(origins)
         await cors(scope, receive, send)
 
 
 async def sync_origins(session: AsyncSession) -> None:
     """Rebuild the per-model CORS origin map from all active models."""
     result = await session.execute(
-        select(RagModel.slug, RagModel.allowed_origins).where(RagModel.is_active == True)  # noqa: E712
+        select(RagModel.slug, RagModel.allowed_origins).where(
+            RagModel.is_active == True,  # noqa: E712
+            RagModel.deleted_at.is_(None),
+        )
     )
     new_map: dict[str, list[str]] = {}
     for slug, model_origins in result.all():

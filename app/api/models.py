@@ -9,7 +9,7 @@ from app.dependencies import (
     ClerkUser,
     get_active_model_by_slug,
     get_model_by_slug,
-    require_api_key,
+    get_clerk_user,
     require_model_auth,
 )
 from app.models.rag_model import RagModel
@@ -23,7 +23,7 @@ router = APIRouter(prefix="/models", tags=["models"])
 @router.post("", response_model=RagModelRead, status_code=201)
 async def create_model(
     body: RagModelCreate,
-    clerk_user: ClerkUser = Depends(require_api_key),
+    clerk_user: ClerkUser = Depends(get_clerk_user),
     session: AsyncSession = Depends(get_session),
 ):
     """Create a new RAG model."""
@@ -63,7 +63,7 @@ async def create_model(
 
 @router.get("", response_model=list[RagModelRead])
 async def list_models(
-    clerk_user: ClerkUser = Depends(require_api_key),
+    clerk_user: ClerkUser = Depends(get_clerk_user),
     session: AsyncSession = Depends(get_session),
 ):
     """List all RAG models. Clerk users see only their own models."""

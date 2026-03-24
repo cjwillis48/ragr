@@ -7,15 +7,13 @@ import anthropic
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import async_session, get_session
 from app.dependencies import require_chat_auth
 from app.services.rate_limit import RateLimiter
-
-_chat_limiter = RateLimiter(max_requests=settings.rate_limit_per_min, window_seconds=60)
 from app.models.conversation import Conversation, Message
 from app.models.rag_model import RagModel
 from app.schemas.chat import ChatRequest, ChatResponse
@@ -23,6 +21,7 @@ from app.services.budget import check_budget, estimate_cost, estimate_rerank_cos
 from app.services.generation import GenerationResult, generate_answer, generate_answer_stream
 from app.services.retrieval import ChunkScore, RetrievalResult, retrieve_with_threshold
 
+_chat_limiter = RateLimiter(max_requests=settings.rate_limit_per_min, window_seconds=60)
 router = APIRouter(tags=["chat"])
 logger = logging.getLogger("ragr.chat")
 
@@ -91,7 +90,11 @@ async def _log_message(
         session.add(conversation)
         await session.flush()
 
-    conversation.message_count += 1
+    await session.execute(
+        update(Conversation)
+        .where(Conversation.id == conversation.id)
+        .values(message_count=Conversation.message_count + 1)
+    )
 
     session.add(Message(
         conversation_id=conversation.id,

@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import time
 from dataclasses import dataclass
@@ -10,18 +11,20 @@ logger = logging.getLogger("ragr.reranker")
 
 _platform_client: voyageai.AsyncClient | None = None
 
-
-from functools import lru_cache
-
-
-@lru_cache(maxsize=16)
-def _cached_client(api_key: str) -> voyageai.AsyncClient:
-    return voyageai.AsyncClient(api_key=api_key, timeout=30)
+# TTL cache for custom-key clients: hash(key) -> (client, created_at)
+_client_cache: dict[str, tuple[voyageai.AsyncClient, float]] = {}
+_CLIENT_TTL = 300  # 5 minutes
 
 
 def _get_client(api_key: str | None = None) -> voyageai.AsyncClient:
     if api_key:
-        return _cached_client(api_key)
+        key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+        entry = _client_cache.get(key_hash)
+        if entry and (time.monotonic() - entry[1]) < _CLIENT_TTL:
+            return entry[0]
+        client = voyageai.AsyncClient(api_key=api_key, timeout=30)
+        _client_cache[key_hash] = (client, time.monotonic())
+        return client
     global _platform_client
     if _platform_client is None:
         _platform_client = voyageai.AsyncClient(api_key=settings.voyage_api_key, timeout=30)
