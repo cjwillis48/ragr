@@ -23,7 +23,7 @@ spec:
           type: RuntimeDefault
       initContainers:
         - name: migrate
-          image: ghcr.io/cjwillis48/ragr:dev-dev.b66a7d2
+          image: ghcr.io/cjwillis48/ragr:dev-dev.52d3671
           command: ["alembic", "upgrade", "head"]
           securityContext:
             allowPrivilegeEscalation: false
@@ -44,7 +44,7 @@ spec:
               cpu: 250m
       containers:
         - name: ragr
-          image: ghcr.io/cjwillis48/ragr:dev-dev.b66a7d2
+          image: ghcr.io/cjwillis48/ragr:dev-dev.52d3671
           ports:
             - containerPort: 8000
           securityContext:
