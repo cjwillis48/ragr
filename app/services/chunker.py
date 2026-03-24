@@ -78,7 +78,9 @@ def _merge_into_chunks(
 
         # Start the next chunk with overlap from the tail of the previous
         if 0 < chunk_overlap < len(current):
-            current = f"{current[-chunk_overlap:]}\n\n{para}"
+            overlap_seed = f"{current[-chunk_overlap:]}\n\n{para}"
+            # If overlap + new paragraph still exceeds chunk_size, skip overlap
+            current = overlap_seed if len(overlap_seed) <= chunk_size else para
         else:
             current = para
 

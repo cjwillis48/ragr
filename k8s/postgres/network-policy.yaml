@@ -1,8 +1,8 @@
-# Deny all ingress to postgres by default
+# Deny all ingress and egress to postgres by default
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: postgres-deny-ingress
+  name: postgres-default-deny
   namespace: ragr
 spec:
   podSelector:
@@ -10,6 +10,7 @@ spec:
       app: postgres
   policyTypes:
     - Ingress
+    - Egress
 ---
 # Allow ragr app to reach postgres
 apiVersion: networking.k8s.io/v1

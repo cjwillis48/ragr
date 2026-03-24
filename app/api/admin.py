@@ -6,7 +6,7 @@ import anthropic
 from fastapi import APIRouter, Depends, Query, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import Date, cast, func, select, text
+from sqlalchemy import Date, cast, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -244,6 +244,12 @@ async def delete_conversation(
         raise HTTPException(status_code=404, detail="Conversation not found")
 
     convo.deleted_at = func.now()
+    # Also soft-delete associated messages
+    await session.execute(
+        update(Message)
+        .where(Message.conversation_id == convo.id, Message.deleted_at.is_(None))
+        .values(deleted_at=func.now())
+    )
     await session.commit()
 
 

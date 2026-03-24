@@ -17,9 +17,17 @@ _platform_client: voyageai.AsyncClient | None = None
 logger = logging.getLogger("ragr.embedder")
 
 
+from functools import lru_cache
+
+
+@lru_cache(maxsize=16)
+def _cached_client(api_key: str) -> voyageai.AsyncClient:
+    return voyageai.AsyncClient(api_key=api_key, timeout=30)
+
+
 def _get_client(api_key: str | None = None) -> voyageai.AsyncClient:
     if api_key:
-        return voyageai.AsyncClient(api_key=api_key, timeout=30)
+        return _cached_client(api_key)
     global _platform_client
     if _platform_client is None:
         _platform_client = voyageai.AsyncClient(api_key=settings.voyage_api_key, timeout=30)

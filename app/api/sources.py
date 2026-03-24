@@ -12,7 +12,7 @@ _ingest_semaphore = asyncio.Semaphore(3)
 _background_tasks: set[asyncio.Task] = set()
 
 
-def _track_task(coro, *, name: str | None = None) -> asyncio.Task:
+def _create_background_task(coro, *, name: str | None = None) -> asyncio.Task:
     """Create a tracked background task with automatic cleanup and error logging."""
     task = asyncio.create_task(coro, name=name)
     _background_tasks.add(task)
@@ -27,6 +27,8 @@ def _track_task(coro, *, name: str | None = None) -> asyncio.Task:
 
     task.add_done_callback(_done_callback)
     return task
+
+
 from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -64,8 +66,8 @@ logger = logging.getLogger("ragr.sources")
     response_model=SourceListResponse,
 )
 async def list_sources(
-    model: RagModel = Depends(require_model_auth),
-    session: AsyncSession = Depends(get_session),
+        model: RagModel = Depends(require_model_auth),
+        session: AsyncSession = Depends(get_session),
 ):
     """List all ingested sources for a model."""
     result = await session.execute(
@@ -86,9 +88,9 @@ async def list_sources(
     response_model=SourceResponse,
 )
 async def get_source(
-    source_id: int,
-    model: RagModel = Depends(require_model_auth),
-    session: AsyncSession = Depends(get_session),
+        source_id: int,
+        model: RagModel = Depends(require_model_auth),
+        session: AsyncSession = Depends(get_session),
 ):
     """Get a single source by ID."""
     result = await session.execute(
@@ -108,11 +110,13 @@ async def get_source(
     response_model=ChunkListResponse,
 )
 async def list_source_chunks(
-    source_id: int,
-    model: RagModel = Depends(require_model_auth),
-    session: AsyncSession = Depends(get_session),
+        source_id: int,
+        model: RagModel = Depends(require_model_auth),
+        session: AsyncSession = Depends(get_session),
+        limit: int = 100,
+        offset: int = 0,
 ):
-    """List all content chunks for a source. Useful for debugging ingestion."""
+    """List content chunks for a source with pagination. Useful for debugging ingestion."""
     result = await session.execute(
         select(IngestionSource).where(
             IngestionSource.model_id == model.id,
@@ -123,19 +127,23 @@ async def list_source_chunks(
     if not source:
         raise HTTPException(status_code=404, detail="Source not found")
 
+    base_query = select(ContentChunk).where(
+        ContentChunk.model_id == model.id,
+        ContentChunk.source_identifier == source.source_identifier,
+    )
+
+    total = await session.scalar(
+        select(func.count()).select_from(base_query.subquery())
+    )
+
     chunks_result = await session.execute(
-        select(ContentChunk)
-        .where(
-            ContentChunk.model_id == model.id,
-            ContentChunk.source_identifier == source.source_identifier,
-        )
-        .order_by(ContentChunk.id)
+        base_query.order_by(ContentChunk.id).limit(limit).offset(offset)
     )
     chunks = chunks_result.scalars().all()
     return ChunkListResponse(
         source_identifier=source.source_identifier,
         chunks=[ChunkResponse.model_validate(c) for c in chunks],
-        total=len(chunks),
+        total=total or 0,
     )
 
 
@@ -144,9 +152,9 @@ async def list_source_chunks(
     status_code=204,
 )
 async def delete_source(
-    source_id: int,
-    model: RagModel = Depends(require_model_auth),
-    session: AsyncSession = Depends(get_session),
+        source_id: int,
+        model: RagModel = Depends(require_model_auth),
+        session: AsyncSession = Depends(get_session),
 ):
     """Delete a single source and its chunks."""
     result = await session.execute(
@@ -174,8 +182,8 @@ async def delete_source(
     response_model=PurgeResponse,
 )
 async def purge_sources(
-    model: RagModel = Depends(require_model_auth),
-    session: AsyncSession = Depends(get_session),
+        model: RagModel = Depends(require_model_auth),
+        session: AsyncSession = Depends(get_session),
 ):
     """Delete all ingested content for a model (chunks + sources). Model config is preserved."""
     chunk_result = await session.execute(
@@ -262,10 +270,10 @@ async def _ingest_url_background(model_id: int, url: str, source_identifier: str
 
 
 async def _ingest_file_background_with_status(
-    model_id: int,
-    text: str,
-    source_identifier: str,
-    content_type: str,
+        model_id: int,
+        text: str,
+        source_identifier: str,
+        content_type: str,
 ) -> None:
     """Run file ingestion in the background, updating status on completion."""
     async with _ingest_semaphore, async_session() as session:
@@ -311,10 +319,10 @@ async def _ingest_file_background_with_status(
     status_code=200,
 )
 async def create_source(
-    body: CreateSourceRequest,
-    response: Response,
-    model: RagModel = Depends(require_model_auth),
-    session: AsyncSession = Depends(get_session),
+        body: CreateSourceRequest,
+        response: Response,
+        model: RagModel = Depends(require_model_auth),
+        session: AsyncSession = Depends(get_session),
 ):
     """Unified text/URL ingest. Use POST /sources/upload for file upload.
 
@@ -402,7 +410,7 @@ async def create_source(
 
     # Fire background tasks after commit so they don't contend with the response
     for url, source_id in task_args:
-        _track_task(
+        _create_background_task(
             _ingest_url_background(
                 model_id=model.id,
                 url=url,
@@ -454,9 +462,9 @@ def _extract_text(filename: str, raw: bytes) -> tuple[str, str]:
     status_code=202,
 )
 async def upload_source(
-    files: list[UploadFile],
-    model: RagModel = Depends(require_model_auth),
-    session: AsyncSession = Depends(get_session),
+        files: list[UploadFile],
+        model: RagModel = Depends(require_model_auth),
+        session: AsyncSession = Depends(get_session),
 ):
     """Upload one or more files to ingest. Supports .txt, .md, .html, .pdf files. Returns 202."""
     import time
@@ -537,7 +545,7 @@ async def upload_source(
     logger.info("upload db upserts: %.1fms for %d files", (time.monotonic() - t_db) * 1000, len(prepared_files))
 
     for filename, text, content_type in prepared_files:
-        _track_task(
+        _create_background_task(
             _ingest_file_background_with_status(
                 model_id=model.id,
                 text=text,
@@ -559,8 +567,8 @@ async def upload_source(
     response_model=PresignedUploadResponse,
 )
 async def presign_upload(
-    body: PresignedUploadRequest,
-    model: RagModel = Depends(require_model_auth),
+        body: PresignedUploadRequest,
+        model: RagModel = Depends(require_model_auth),
 ):
     """Generate presigned R2 PUT URLs for each file. Browser uploads directly to R2."""
     if not r2_is_configured():
@@ -590,9 +598,9 @@ async def presign_upload(
     status_code=202,
 )
 async def confirm_upload(
-    body: ConfirmUploadRequest,
-    model: RagModel = Depends(require_model_auth),
-    session: AsyncSession = Depends(get_session),
+        body: ConfirmUploadRequest,
+        model: RagModel = Depends(require_model_auth),
+        session: AsyncSession = Depends(get_session),
 ):
     """Confirm files have been uploaded to R2. Triggers background ingestion."""
     if not r2_is_configured():
@@ -633,7 +641,7 @@ async def confirm_upload(
     await session.commit()
 
     for f in body.files:
-        _track_task(
+        _create_background_task(
             _ingest_r2_file_background(
                 model_id=model.id,
                 object_key=f.object_key,
@@ -645,9 +653,9 @@ async def confirm_upload(
 
 
 async def _ingest_r2_file_background(
-    model_id: int,
-    object_key: str,
-    filename: str,
+        model_id: int,
+        object_key: str,
+        filename: str,
 ) -> None:
     """Download file from R2, extract text, ingest, then delete from R2."""
     from app.services.r2 import download_object, delete_object
@@ -749,8 +757,8 @@ async def _crawl_site_background(model_id: int, crawl_request: CrawlRequest) -> 
     status_code=202,
 )
 async def crawl_site_endpoint(
-    body: CrawlRequest,
-    model: RagModel = Depends(require_model_auth),
+        body: CrawlRequest,
+        model: RagModel = Depends(require_model_auth),
 ):
     """Crawl a website and ingest all discovered pages. Runs in the background."""
     try:
@@ -758,7 +766,7 @@ async def crawl_site_endpoint(
     except SSRFError as e:
         raise HTTPException(status_code=422, detail=str(e))
 
-    _track_task(_crawl_site_background(model.id, body))
+    _create_background_task(_crawl_site_background(model.id, body))
 
     return CrawlResponse(
         status="pending",

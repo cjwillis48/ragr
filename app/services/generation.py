@@ -26,9 +26,17 @@ _platform_client: anthropic.AsyncAnthropic | None = None
 _META_RE = re.compile(r'\s*<meta\s+status="(answered|unanswered|off_topic)"\s*/>\s*$')
 
 
+from functools import lru_cache
+
+
+@lru_cache(maxsize=16)
+def _cached_client(api_key: str) -> anthropic.AsyncAnthropic:
+    return anthropic.AsyncAnthropic(api_key=api_key, max_retries=4, timeout=60.0)
+
+
 def _get_client(api_key: str | None = None) -> anthropic.AsyncAnthropic:
     if api_key:
-        return anthropic.AsyncAnthropic(api_key=api_key, max_retries=4, timeout=60.0)
+        return _cached_client(api_key)
     global _platform_client
     if _platform_client is None:
         _platform_client = anthropic.AsyncAnthropic(

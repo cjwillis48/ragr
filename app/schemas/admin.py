@@ -57,14 +57,8 @@ class ConversationDetailResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class ChunkResponse(BaseModel):
-    id: int
-    content: str
-    source_url: str
-    source_identifier: str
-    content_type: str
-
-    model_config = {"from_attributes": True}
+# ChunkResponse is defined in app.schemas.sources and re-exported here for backwards compat
+from app.schemas.sources import ChunkResponse  # noqa: F401
 
 
 class ConversationListResponse(BaseModel):

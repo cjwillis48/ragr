@@ -1,6 +1,10 @@
 from datetime import datetime
 
-from pydantic import BaseModel, Field, model_validator
+import re
+
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+_ORIGIN_RE = re.compile(r"^https?://[^\s/]+$")
 
 
 class ChatTheme(BaseModel):
@@ -50,6 +54,15 @@ def _validate_embedding_model(model_name: str | None) -> str | None:
     return model_name
 
 
+def _validate_allowed_origins(origins: list[str] | None) -> list[str] | None:
+    if origins is None:
+        return None
+    for origin in origins:
+        if not _ORIGIN_RE.match(origin):
+            raise ValueError(f"Invalid origin '{origin}': must be http(s)://hostname (no path or trailing slash)")
+    return origins
+
+
 def _validate_generation_model(model_name: str | None) -> str | None:
     if model_name is None:
         return None
@@ -62,68 +75,53 @@ def _validate_generation_model(model_name: str | None) -> str | None:
     return model_name
 
 
-class RagModelCreate(BaseModel):
+class _RagModelFields(BaseModel):
+    """Shared fields for create/update. All optional with validation constraints.
+
+    RagModelCreate and RagModelUpdate inherit from this so new fields
+    only need to be added in one place.
+    """
+    description: str | None = Field(None, max_length=1000)
+    system_prompt: str | None = Field(None, max_length=10000)
+    chat_theme: ChatTheme | None = None
+    chunk_size: int | None = Field(None, ge=100, le=10000)
+    chunk_overlap: int | None = Field(None, ge=0, le=2000)
+    similarity_threshold: float | None = Field(None, ge=0.0, le=1.0)
+    top_k: int | None = Field(None, ge=1, le=100)
+    embedding_model: str | None = None
+    generation_model: str | None = None
+    reranker_enabled: bool | None = None
+    rerank_model: str | None = None
+    rerank_candidates: int | None = Field(None, ge=1, le=500)
+    rerank_threshold: float | None = Field(None, ge=0.0, le=1.0)
+    keyword_search_enabled: bool | None = None
+    sample_questions: list[str] | None = None
+    history_turns: int | None = Field(None, ge=0, le=50)
+    hosted_chat: bool | None = None
+    allowed_origins: list[str] | None = None
+    budget_limit: float | None = Field(None, ge=0.0)
+    custom_anthropic_key: str | None = None
+    custom_voyage_key: str | None = None
+
+    @model_validator(mode="after")
+    def validate_models(self):
+        _validate_embedding_model(self.embedding_model)
+        _validate_generation_model(self.generation_model)
+        _validate_allowed_origins(self.allowed_origins)
+        return self
+
+
+class RagModelCreate(_RagModelFields):
     name: str = Field(..., min_length=1, max_length=255)
     slug: str = Field(..., min_length=1, max_length=255, pattern=r"^[a-z0-9][a-z0-9-]*$")
-    description: str = ""
-    system_prompt: str = ""
-    chat_theme: ChatTheme | None = None
-    chunk_size: int | None = None
-    chunk_overlap: int | None = None
-    similarity_threshold: float | None = None
-    top_k: int | None = None
-    embedding_model: str | None = None
-    generation_model: str | None = None
-    reranker_enabled: bool | None = None
-    rerank_model: str | None = None
-    rerank_candidates: int | None = None
-    rerank_threshold: float | None = None
-    keyword_search_enabled: bool | None = None
-    sample_questions: list[str] | None = None
-    history_turns: int | None = None
-    hosted_chat: bool | None = None
-    allowed_origins: list[str] | None = None
-    budget_limit: float | None = None
-    custom_anthropic_key: str | None = None
-    custom_voyage_key: str | None = None
-
-    @model_validator(mode="after")
-    def validate_models(self):
-        _validate_embedding_model(self.embedding_model)
-        _validate_generation_model(self.generation_model)
-        return self
+    # Override defaults for create — empty string instead of None
+    description: str = Field("", max_length=1000)
+    system_prompt: str = Field("", max_length=10000)
 
 
-class RagModelUpdate(BaseModel):
+class RagModelUpdate(_RagModelFields):
     name: str | None = Field(None, min_length=1, max_length=255)
-    description: str | None = None
-    system_prompt: str | None = None
-    chat_theme: ChatTheme | None = None
-    chunk_size: int | None = None
-    chunk_overlap: int | None = None
-    similarity_threshold: float | None = None
-    top_k: int | None = None
-    embedding_model: str | None = None
-    generation_model: str | None = None
-    reranker_enabled: bool | None = None
-    rerank_model: str | None = None
-    rerank_candidates: int | None = None
-    rerank_threshold: float | None = None
-    keyword_search_enabled: bool | None = None
-    sample_questions: list[str] | None = None
-    history_turns: int | None = None
-    hosted_chat: bool | None = None
-    allowed_origins: list[str] | None = None
-    budget_limit: float | None = None
     is_active: bool | None = None
-    custom_anthropic_key: str | None = None
-    custom_voyage_key: str | None = None
-
-    @model_validator(mode="after")
-    def validate_models(self):
-        _validate_embedding_model(self.embedding_model)
-        _validate_generation_model(self.generation_model)
-        return self
 
 
 class RagModelPublic(BaseModel):

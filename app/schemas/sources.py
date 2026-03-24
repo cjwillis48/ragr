@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class SourceResponse(BaseModel):
@@ -27,6 +27,7 @@ class ChunkResponse(BaseModel):
     id: int
     content: str
     source_url: str
+    source_identifier: str
     content_type: str
     ingested_at: datetime
 
@@ -71,6 +72,13 @@ class CreateSourceRequest(BaseModel):
             for url in v:
                 _validate_http_url(url)
         return v
+
+    @model_validator(mode="after")
+    def exactly_one_source(self):
+        provided = sum([self.content is not None, self.url is not None, bool(self.urls)])
+        if provided > 1:
+            raise ValueError("Provide only one of 'content', 'url', or 'urls'")
+        return self
 
 
 class CreateSourceResponse(BaseModel):

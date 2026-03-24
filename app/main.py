@@ -84,7 +84,7 @@ async def readyz(session: AsyncSession = Depends(get_session)):
         await session.execute(text("SELECT 1"))
         return {"status": "ok"}
     except Exception:
-        logger.error("Unable to connect to database: %s", settings.database_url, exc_info=True)
+        logger.error("Unable to connect to database", exc_info=True)
         return JSONResponse(status_code=503, content={"status": "unavailable"})
 
 
