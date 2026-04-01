@@ -22,36 +22,33 @@ class ChatTheme(BaseModel):
     show_sample_questions_in_greeting: bool | None = None
 
 
-# Supported embedding models and their vector dimensions.
-# The DB column is Vector(1024), so only 1024-dim models are allowed.
-SUPPORTED_EMBEDDING_MODELS: dict[str, int] = {
-    "voyage-4-lite": 1024,
-    "voyage-4": 1024,
-    "voyage-3": 1024,
-    "voyage-3-lite": 512,
-    "voyage-3-large": 1024,
-    "voyage-code-3": 1024,
+SUPPORTED_EMBEDDING_MODELS: set[str] = {
+    "voyage-4-lite",
+    "voyage-4",
 }
 
-ALLOWED_EMBEDDING_MODELS = {k for k, v in SUPPORTED_EMBEDDING_MODELS.items() if v == 1024}
-
-ALLOWED_GENERATION_MODELS = {
+SUPPORTED_GENERATION_MODELS: set[str] = {
     "claude-haiku-4-5",
-    "claude-sonnet-4-5",
-    "claude-opus-4",
+    "claude-sonnet-4-6",
+    "claude-opus-4-6",
 }
+
+
+def _validate_model(allowlist: set[str], model_name: str | None):
+    if model_name is None:
+        return None
+    if model_name not in allowlist:
+        allowed = ", ".join(sorted(allowlist))
+        raise ValueError(f"Unsupported model. Allowed: {allowed}")
+    return model_name
 
 
 def _validate_embedding_model(model_name: str | None) -> str | None:
-    if model_name is None:
-        return None
-    if model_name not in ALLOWED_EMBEDDING_MODELS:
-        allowed = ", ".join(sorted(ALLOWED_EMBEDDING_MODELS))
-        raise ValueError(
-            f"Unsupported embedding model '{model_name}'. "
-            f"Allowed models (1024-dim): {allowed}"
-        )
-    return model_name
+    return _validate_model(SUPPORTED_EMBEDDING_MODELS, model_name)
+
+
+def _validate_generation_model(model_name: str | None) -> str | None:
+    return _validate_model(SUPPORTED_GENERATION_MODELS, model_name)
 
 
 def _validate_allowed_origins(origins: list[str] | None) -> list[str] | None:
@@ -59,20 +56,8 @@ def _validate_allowed_origins(origins: list[str] | None) -> list[str] | None:
         return None
     for origin in origins:
         if not _ORIGIN_RE.match(origin):
-            raise ValueError(f"Invalid origin '{origin}': must be http(s)://hostname (no path or trailing slash)")
+            raise ValueError("Invalid origin: must be http(s)://hostname (no path or trailing slash)")
     return origins
-
-
-def _validate_generation_model(model_name: str | None) -> str | None:
-    if model_name is None:
-        return None
-    if model_name not in ALLOWED_GENERATION_MODELS:
-        allowed = ", ".join(sorted(ALLOWED_GENERATION_MODELS))
-        raise ValueError(
-            f"Unsupported generation model '{model_name}'. "
-            f"Allowed models: {allowed}"
-        )
-    return model_name
 
 
 class _RagModelFields(BaseModel):
@@ -129,7 +114,6 @@ class RagModelPublic(BaseModel):
     slug: str
     description: str
     chat_theme: ChatTheme | None = None
-    allowed_origins: list[str]
     hosted_chat: bool
     sample_questions: list[str] = []
     accepting_requests: bool = True

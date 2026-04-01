@@ -2,7 +2,6 @@ import json
 import logging
 from datetime import UTC, datetime, timedelta
 
-import anthropic
 from fastapi import APIRouter, Depends, Query, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -10,7 +9,6 @@ from sqlalchemy import Date, cast, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.config import settings
 from app.database import get_session
 from app.dependencies import require_model_auth
 from app.models.content import ContentChunk
@@ -368,8 +366,8 @@ async def generate_system_prompt(
 
     user_message = "\n\n".join(user_parts)
 
-    api_key = model.custom_anthropic_key or settings.anthropic_api_key
-    client = anthropic.AsyncAnthropic(api_key=api_key, max_retries=2, timeout=30.0)
+    from app.services.generation import _get_client
+    client = _get_client(model.custom_anthropic_key)
 
     async def stream():
         try:
@@ -459,8 +457,8 @@ async def generate_sample_questions(
 
     user_message = "\n\n".join(user_parts)
 
-    api_key = model.custom_anthropic_key or settings.anthropic_api_key
-    client = anthropic.AsyncAnthropic(api_key=api_key, max_retries=2, timeout=30.0)
+    from app.services.generation import _get_client
+    client = _get_client(model.custom_anthropic_key)
 
     response = await client.messages.create(
         model="claude-haiku-4-5",

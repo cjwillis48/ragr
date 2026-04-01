@@ -1,4 +1,8 @@
-"""Simple in-memory rate limiter for chat endpoints."""
+"""Simple in-memory rate limiter for chat endpoints.
+
+NOTE: This only works with a single replica. If we scale to multiple
+replicas, replace with a shared store (e.g. Redis or similar).
+"""
 
 import time
 from collections import defaultdict
@@ -17,16 +21,14 @@ class RateLimiter:
         now = time.monotonic()
         cutoff = now - self._window
 
-        # Prune expired entries
-        timestamps = self._requests[key]
-        self._requests[key] = [t for t in timestamps if t > cutoff]
+        # Prune expired entries, then clean up keys with no recent requests
+        recent = [t for t in self._requests[key] if t > cutoff]
+        if not recent:
+            self._requests.pop(key, None)
 
-        if not self._requests[key]:
-            del self._requests[key]
-            return True
-
-        if len(self._requests[key]) >= self._max:
+        if len(recent) >= self._max:
             return False
 
-        self._requests[key].append(now)
+        recent.append(now)
+        self._requests[key] = recent
         return True

@@ -38,6 +38,8 @@ async def _load_session_history(
         .where(
             Conversation.model_id == model.id,
             Conversation.session_id == session_id,
+            Conversation.deleted_at.is_(None),
+            Message.deleted_at.is_(None),
         )
         .order_by(Message.created_at.desc())
         .limit(model.history_turns)
@@ -117,7 +119,12 @@ async def chat(
     session: AsyncSession = Depends(get_session),
 ):
     """Query a model — public endpoint. Set stream: true for SSE."""
-    client_ip = request.client.host if request.client else "unknown"
+    # Prefer CF-Connecting-IP (Cloudflare Tunnel) > X-Forwarded-For > direct connection
+    client_ip = (
+        request.headers.get("cf-connecting-ip")
+        or (request.headers.get("x-forwarded-for", "").split(",")[0].strip())
+        or (request.client.host if request.client else "unknown")
+    )
     rate_key = f"{model.id}:{client_ip}"
     if not _chat_limiter.is_allowed(rate_key):
         raise HTTPException(status_code=429, detail="Rate limit exceeded. Please wait before trying again.")

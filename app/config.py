@@ -4,7 +4,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
-    database_url: str = "postgresql+asyncpg://ragr:ragr@localhost:5432/ragr"
+    database_url: str = ""
 
     anthropic_api_key: str = ""
     voyage_api_key: str = ""
@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     default_generation_model: str = "claude-haiku-4-5"
     default_embedding_model: str = "voyage-4-lite"
     default_rerank_model: str = "rerank-2.5-lite"
+    default_reranker_enabled: bool = True
+    default_history_turns: int = 10
+    default_hosted_chat: bool = True
     default_max_tokens: int = 1024
 
 

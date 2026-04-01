@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Optional
 
 import bcrypt
 from fastapi import Depends, Header, HTTPException, Request
@@ -138,7 +137,6 @@ async def get_active_model_by_slug(
 
 async def get_clerk_user(
     request: Request,
-    authorization: Optional[str] = Header(None),
 ) -> ClerkUser:
     """Extract and verify Clerk JWT. Raises 401 if not authenticated."""
     user = await _verify_clerk_token(request)
@@ -170,14 +168,13 @@ async def require_model_auth(
     # Try Clerk JWT
     clerk_user = await _verify_clerk_token(request)
     if clerk_user is not None:
-        # Model has no owner — any authenticated user can access (legacy models)
-        if model.owner_id is None:
-            return model
-        # Verify ownership
-        if model.owner_id == clerk_user.user_id:
-            return model
         # Superuser gets read-only access to all models
         if clerk_user.is_superuser and request.method in ("GET", "HEAD", "OPTIONS"):
+            return model
+        # Verify ownership — reject models with no owner outright
+        if model.owner_id is None:
+            raise HTTPException(status_code=403, detail="Model has no owner assigned")
+        if model.owner_id == clerk_user.user_id:
             return model
         raise HTTPException(status_code=403, detail="You do not own this model")
 
@@ -188,7 +185,7 @@ async def require_chat_auth(
     slug: str,
     request: Request,
     session: AsyncSession = Depends(get_session),
-    authorization: Optional[str] = Header(None),
+    authorization: str | None = Header(None),
 ) -> RagModel:
     """Authenticate for chat access.
 

@@ -21,4 +21,18 @@ dependencies = [
     "clerk-backend-api>=1.0.0",
     "cryptography>=44.0.0",
     "boto3>=1.35.0",
+    "safehttpx>=0.1.7",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=6.0",
+    "time-machine>=2.16",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = ["slow: marks tests that take >1s"]

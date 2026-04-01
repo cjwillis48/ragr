@@ -1,8 +1,6 @@
 import asyncio
 import logging
-from urllib.parse import urlparse
 
-import httpx
 import pymupdf  # noqa: F401 — eager import to avoid cold-start delay
 
 # Limit concurrent background ingestion tasks to avoid exhausting the DB
@@ -30,10 +28,11 @@ def _create_background_task(coro, *, name: str | None = None) -> asyncio.Task:
     return task
 
 
-from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, UploadFile
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database import async_session, get_session
 from app.dependencies import require_model_auth
 from app.models.content import ContentChunk
@@ -56,7 +55,7 @@ from app.schemas.sources import (
 )
 from app.services.ingest import ingest_content
 from app.services.r2 import is_configured as r2_is_configured
-from app.services.url_validation import SSRFError, check_response_ip, validate_url
+from app.services.url_validation import SSRFError, safe_get, validate_url
 
 router = APIRouter(tags=["sources"])
 logger = logging.getLogger("ragr.sources")
@@ -114,8 +113,8 @@ async def list_source_chunks(
         source_id: int,
         model: RagModel = Depends(require_model_auth),
         session: AsyncSession = Depends(get_session),
-        limit: int = 100,
-        offset: int = 0,
+        limit: int = Query(100, ge=1, le=500),
+        offset: int = Query(0, ge=0),
 ):
     """List content chunks for a source with pagination. Useful for debugging ingestion."""
     result = await session.execute(
@@ -225,19 +224,19 @@ async def _ingest_url_background(model_id: int, url: str, source_identifier: str
             await session.commit()
 
         try:
-            async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
-                resp = await client.get(url)
-                resp.raise_for_status()
+            max_bytes = settings.max_upload_size_mb * 1024 * 1024
+            resp = await safe_get(url, timeout=30, follow_redirects=True)
+            resp.raise_for_status()
 
-                # Re-validate the actual connected IP to defeat DNS rebinding
-                peer = resp.extensions.get("network_stream")
-                if peer and hasattr(peer, "get_extra_info"):
-                    peername = peer.get_extra_info("peername")
-                    if peername:
-                        check_response_ip(peername[0], hostname=urlparse(url).hostname or "unknown")
+            # Guard against oversized responses
+            content_length = int(resp.headers.get("content-length", 0))
+            if content_length > max_bytes:
+                raise ValueError(f"Response too large: {content_length} bytes")
+            if len(resp.content) > max_bytes:
+                raise ValueError(f"Response body too large: {len(resp.content)} bytes")
 
-                content_type_header = resp.headers.get("content-type", "")
-                raw_text = resp.text
+            content_type_header = resp.headers.get("content-type", "")
+            raw_text = resp.text
 
             if "html" in content_type_header:
                 from bs4 import BeautifulSoup
@@ -373,7 +372,7 @@ async def create_source(
     url_list = body.urls if has_urls else [body.url]
     for u in url_list:
         try:
-            validate_url(u)  # returns (url, resolved_ips); we just need the validation
+            await validate_url(u)  # returns (url, resolved_ips); we just need the validation
         except SSRFError as e:
             raise HTTPException(status_code=422, detail=str(e))
 
@@ -774,7 +773,7 @@ async def crawl_site_endpoint(
 ):
     """Crawl a website and ingest all discovered pages. Runs in the background."""
     try:
-        validate_url(body.url)  # validates and returns (url, ips)
+        await validate_url(body.url)  # validates and returns (url, ips)
     except SSRFError as e:
         raise HTTPException(status_code=422, detail=str(e))
 

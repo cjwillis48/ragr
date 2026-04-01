@@ -1,37 +1,6 @@
-IMAGE := ghcr.io/cjwillis48/ragr
 NAMESPACE := ragr
-CERT := k8s/secrets/sealed-secrets-pub.pem
 
-.PHONY: build push build-push deploy restart logs status enter-pg enter-ragr seal-secret
-
-build:
-	docker buildx build --platform linux/arm64 -t $(IMAGE):dev .
-
-push:
-	docker push $(IMAGE):dev
-
-build-push: build push
-
-deploy:
-	kubectl apply -f k8s/namespace.yaml
-	kubectl apply -f k8s/secrets/ragr-secrets.sealed.yaml
-	kubectl apply -f k8s/secrets/ghcr-pull-secret.sealed.yaml
-	kubectl apply -f k8s/postgres/
-	kubectl apply -f k8s/ragr/
-
-seal-secret:
-	@test -n "$(IN)" || (echo "Usage: make seal-secret IN=/tmp/plain.yml OUT=k8s/secrets/output.sealed.yaml" && exit 1)
-	@test -n "$(OUT)" || (echo "Usage: make seal-secret IN=/tmp/plain.yml OUT=k8s/secrets/output.sealed.yaml" && exit 1)
-	kubeseal --format yaml --cert $(CERT) < $(IN) > $(OUT)
-
-# TODO: think this is broken AI slop
-seal-add:
-	@test -n "$(KEY)" || (echo "Usage: make seal-add KEY=MY_SECRET VALUE=hunter2" && exit 1)
-	@test -n "$(VALUE)" || (echo "Usage: make seal-add KEY=MY_SECRET VALUE=hunter2" && exit 1)
-	@ENCRYPTED=$$(printf '%s' "$(VALUE)" | kubeseal --raw --namespace $(NAMESPACE) --name ragr-secrets --controller-name sealed-secrets-controller --controller-namespace kube-system) && \
-	awk -v key="$(KEY)" -v val="$$ENCRYPTED" '/^  encryptedData:/{print; print "    " key ": " val; next}1' k8s/secrets/ragr-secrets.sealed.yaml > k8s/secrets/ragr-secrets.sealed.yaml.tmp && \
-	mv k8s/secrets/ragr-secrets.sealed.yaml.tmp k8s/secrets/ragr-secrets.sealed.yaml && \
-	echo "Sealed $(KEY) into ragr-secrets"
+.PHONY: restart logs status enter-pg enter-ragr db-export db-import test test-unit test-cov
 
 restart:
 	kubectl rollout restart deployment/ragr -n $(NAMESPACE)
@@ -47,3 +16,20 @@ enter-pg:
 
 enter-ragr:
 	kubectl exec -it -n $(NAMESPACE) deployment/ragr -- /bin/bash
+
+db-export:
+	kubectl exec -n $(NAMESPACE) postgres-0 -- pg_dump -U ragr -d ragr > backup.sql
+	@echo "Exported to backup.sql ($$(wc -c < backup.sql) bytes)"
+
+db-import:
+	kubectl exec -i -n $(NAMESPACE) postgres-0 -- psql -U ragr -d ragr < backup.sql
+	@echo "Import complete"
+
+test:
+	uv run pytest -x -q
+
+test-unit:
+	uv run pytest tests/unit -x -q
+
+test-cov:
+	uv run pytest --cov=app --cov-report=term-missing

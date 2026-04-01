@@ -30,7 +30,7 @@ class RagModel(Base):
     __tablename__ = "rag_models"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    owner_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    owner_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     slug: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
     description: Mapped[str] = mapped_column(Text, default="")
@@ -43,7 +43,7 @@ class RagModel(Base):
     top_k: Mapped[int] = mapped_column(Integer, default=15)
     embedding_model: Mapped[str] = mapped_column(String(100), nullable=False)
     generation_model: Mapped[str] = mapped_column(String(100), nullable=False)
-    reranker_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    reranker_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     rerank_model: Mapped[str] = mapped_column(String(100), default="rerank-2.5-lite")
     rerank_candidates: Mapped[int] = mapped_column(Integer, default=60)
     rerank_threshold: Mapped[float] = mapped_column(Float, default=0.0)

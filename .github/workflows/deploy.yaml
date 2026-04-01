@@ -2,7 +2,7 @@ name: Build & Deploy
 
 on:
   push:
-    branches: [main, prod-release-for-publicizing]
+    branches: [main]
 
 jobs:
   build-and-push:
@@ -30,7 +30,7 @@ jobs:
       - name: Compute image tag
         id: vars
         run: |
-          VERSION=$(python3 -c "import re; print(re.search(r'__version__\s*=\s*\"(.+?)\"', open('app/__init__.py').read()).group(1))")
+          VERSION=$(python3 -c "import re; print(re.search(r'^version\s*=\s*\"(.+?)\"', open('pyproject.toml').read(), re.M).group(1))")
           SHORT_SHA=$(echo "${{ github.sha }}" | head -c 7)
           echo "tag=${VERSION}-dev.${SHORT_SHA}" >> "$GITHUB_OUTPUT"
 

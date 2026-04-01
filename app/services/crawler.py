@@ -5,10 +5,9 @@ from collections import deque
 from dataclasses import dataclass
 from urllib.parse import urljoin, urlparse
 
-import httpx
 from bs4 import BeautifulSoup
 
-from app.services.url_validation import SSRFError, check_response_ip, validate_url
+from app.services.url_validation import safe_get
 
 logger = logging.getLogger("ragr.crawler")
 
@@ -65,8 +64,6 @@ async def crawl_site(
 
     Returns list of CrawledPage results.
     """
-    validate_url(root_url)  # validates and returns (url, ips); we just need the check
-
     parsed_root = urlparse(root_url)
     domain = parsed_root.netloc
 
@@ -80,58 +77,47 @@ async def crawl_site(
 
     excludes = exclude_patterns or []
 
-    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
-        while queue and len(results) < max_pages:
-            url, depth = queue.popleft()
+    while queue and len(results) < max_pages:
+        url, depth = queue.popleft()
 
-            # Check exclude patterns
-            if any(pattern in url for pattern in excludes):
-                continue
+        # Check exclude patterns
+        if any(pattern in url for pattern in excludes):
+            continue
 
-            try:
-                validate_url(url)
-            except SSRFError:
-                logger.warning("Blocked SSRF attempt: %s, skipping", url)
-                continue
+        try:
+            resp = await safe_get(url, timeout=30, follow_redirects=True)
+            resp.raise_for_status()
+        except Exception:
+            logger.warning("Failed to fetch %s, skipping", url)
+            continue
 
-            try:
-                resp = await client.get(url)
-                resp.raise_for_status()
-                # Re-validate actual connected IP to defeat DNS rebinding
-                peer = resp.extensions.get("network_stream")
-                if peer and hasattr(peer, "get_extra_info"):
-                    peername = peer.get_extra_info("peername")
-                    if peername:
-                        check_response_ip(peername[0], hostname=urlparse(url).hostname or "unknown")
-            except SSRFError:
-                logger.warning("Post-fetch SSRF check failed for %s, skipping", url)
-                continue
-            except Exception:
-                logger.warning("Failed to fetch %s, skipping", url)
-                continue
+        # Skip oversized pages (10MB limit per page)
+        if len(resp.content) > 10 * 1024 * 1024:
+            logger.warning("Skipping oversized page %s (%d bytes)", url, len(resp.content))
+            continue
 
-            content_type_header = resp.headers.get("content-type", "")
-            if "html" not in content_type_header:
-                continue
+        content_type_header = resp.headers.get("content-type", "")
+        if "html" not in content_type_header:
+            continue
 
-            raw_html = resp.text
-            soup = BeautifulSoup(raw_html, "html.parser")
-            for tag in soup(["script", "style", "nav", "footer", "head"]):
-                tag.decompose()
-            text = soup.get_text(separator="\n\n").strip()
+        raw_html = resp.text
+        soup = BeautifulSoup(raw_html, "html.parser")
+        for tag in soup(["script", "style", "nav", "footer", "head"]):
+            tag.decompose()
+        text = soup.get_text(separator="\n\n").strip()
 
-            if not text or len(text) < 50:
-                continue
+        if not text or len(text) < 50:
+            continue
 
-            results.append(CrawledPage(url=url, text=text, content_type="html"))
-            logger.info("Crawled %s (%d chars, depth %d, %d/%d pages)", url, len(text), depth, len(results), max_pages)
+        results.append(CrawledPage(url=url, text=text, content_type="html"))
+        logger.info("Crawled %s (%d chars, depth %d, %d/%d pages)", url, len(text), depth, len(results), max_pages)
 
-            # Discover links if we haven't hit depth limit
-            if depth < max_depth:
-                for link in _extract_links(raw_html, url, domain, prefix):
-                    if link not in visited:
-                        visited.add(link)
-                        queue.append((link, depth + 1))
+        # Discover links if we haven't hit depth limit
+        if depth < max_depth:
+            for link in _extract_links(raw_html, url, domain, prefix):
+                if link not in visited:
+                    visited.add(link)
+                    queue.append((link, depth + 1))
 
     logger.info("Crawl complete: %d pages from %s", len(results), root_url)
     return results

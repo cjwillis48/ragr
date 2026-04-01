@@ -38,7 +38,6 @@ demo/
 
 # Misc
 .DS_Store
-.sops.yaml
 .python-version
 docker-compose.yaml
 Dockerfile
