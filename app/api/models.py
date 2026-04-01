@@ -47,6 +47,7 @@ async def create_model(
         reranker_enabled=body.reranker_enabled if body.reranker_enabled is not None else settings.default_reranker_enabled,
         rerank_model=body.rerank_model or settings.default_rerank_model,
         history_turns=body.history_turns if body.history_turns is not None else settings.default_history_turns,
+        max_tokens=body.max_tokens if body.max_tokens is not None else settings.default_max_tokens,
         hosted_chat=body.hosted_chat if body.hosted_chat is not None else settings.default_hosted_chat,
         allowed_origins=body.allowed_origins if body.allowed_origins is not None else [],
         budget_limit=body.budget_limit if body.budget_limit is not None else settings.default_budget_limit,

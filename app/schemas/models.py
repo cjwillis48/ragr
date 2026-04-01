@@ -82,6 +82,7 @@ class _RagModelFields(BaseModel):
     keyword_search_enabled: bool | None = None
     sample_questions: list[str] | None = None
     history_turns: int | None = Field(None, ge=0, le=50)
+    max_tokens: int | None = Field(None, ge=1, le=8192)
     hosted_chat: bool | None = None
     allowed_origins: list[str] | None = None
     budget_limit: float | None = Field(None, ge=0.0)
@@ -141,6 +142,7 @@ class RagModelRead(BaseModel):
     keyword_search_enabled: bool
     sample_questions: list[str]
     history_turns: int
+    max_tokens: int
     hosted_chat: bool
     allowed_origins: list[str]
     budget_limit: float
