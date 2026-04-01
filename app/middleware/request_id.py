@@ -1,9 +1,11 @@
 import logging
+import re
 import time
 import uuid
 from contextvars import ContextVar
 
 REQUEST_ID_CTX: ContextVar[str] = ContextVar("request_id", default="-")
+_SAFE_ID_RE = re.compile(r"^[a-zA-Z0-9_.\-]{1,128}$")
 
 _access_logger = logging.getLogger("ragr.access")
 
@@ -29,7 +31,8 @@ class RequestIdMiddleware:
             return
 
         headers = {k.lower(): v for k, v in scope.get("headers", [])}
-        request_id = headers.get(b"x-request-id", b"").decode().strip() or str(uuid.uuid4())
+        raw_id = headers.get(b"x-request-id", b"").decode().strip()
+        request_id = raw_id if _SAFE_ID_RE.match(raw_id) else str(uuid.uuid4())
         REQUEST_ID_CTX.set(request_id)
 
         status_code = 0

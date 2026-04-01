@@ -59,9 +59,7 @@ class DynamicCORSMiddleware:
             model_origins = _origins_by_slug.get(slug, [])
             origins = list(set(model_origins + settings.console_origins))
         else:
-            all_origins = {o for origins in _origins_by_slug.values() for o in origins}
-            all_origins.update(settings.console_origins)
-            origins = list(all_origins)
+            origins = list(settings.console_origins)
 
         cors = self._get_cors(origins)
         await cors(scope, receive, send)

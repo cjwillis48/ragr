@@ -1,6 +1,7 @@
 import logging
 from contextlib import asynccontextmanager
 
+from cryptography.fernet import Fernet
 from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -40,7 +41,6 @@ async def lifespan(_: FastAPI):
     if not settings.encryption_key:
         raise RuntimeError("ENCRYPTION_KEY must be set")
     try:
-        from cryptography.fernet import Fernet
         Fernet(settings.encryption_key.encode())
     except Exception as exc:
         raise RuntimeError(f"ENCRYPTION_KEY is invalid: {exc}") from exc

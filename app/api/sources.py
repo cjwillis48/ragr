@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from pathlib import Path
 
 import pymupdf  # noqa: F401 — eager import to avoid cold-start delay
 
@@ -60,6 +61,12 @@ from app.services.url_validation import SSRFError, safe_get, validate_url
 
 router = APIRouter(tags=["sources"])
 logger = logging.getLogger("ragr.sources")
+
+ALLOWED_EXTENSIONS = {".txt", ".md", ".html", ".htm", ".pdf", ".csv", ".json"}
+
+
+class ExtractionError(Exception):
+    """Raised when text extraction from a file fails."""
 
 
 async def _mark_source_failed(model_id: int, source_identifier: str) -> None:
@@ -334,12 +341,9 @@ async def create_source(
     has_content = body.content is not None
     has_url = body.url is not None
     has_urls = body.urls is not None and len(body.urls) > 0
-    provided = sum([has_content, has_url, has_urls])
 
-    if provided == 0:
+    if not (has_content or has_url or has_urls):
         raise HTTPException(status_code=422, detail="Provide one of 'content', 'url', or 'urls'")
-    if provided > 1:
-        raise HTTPException(status_code=422, detail="Provide only one of 'content', 'url', or 'urls'")
 
     if has_content:
         if not body.source_identifier:
@@ -424,35 +428,33 @@ async def create_source(
 
 
 def _extract_text(filename: str, raw: bytes) -> tuple[str, str]:
-    """Extract text and content_type from raw file bytes. Raises HTTPException on failure."""
-    if filename.lower().endswith(".pdf"):
-        import pymupdf
+    """Extract text and content_type from raw file bytes. Raises ExtractionError on failure."""
+    ext = Path(filename).suffix.lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        raise ExtractionError(f"Unsupported file type: {ext}")
+
+    if ext == ".pdf":
         try:
             doc = pymupdf.Document(stream=raw, filetype="pdf")
         except Exception:
-            raise HTTPException(status_code=400, detail="Could not parse PDF")
+            raise ExtractionError("Could not parse PDF")
         pages = [page.get_text() for page in doc]
         text = "\n\n".join(pages)
         page_count = len(pages)
         char_count = len(text.strip())
         logger.info("PDF %s: %d pages, %d chars extracted", filename, page_count, char_count)
         if char_count < 100:
-            raise HTTPException(
-                status_code=422,
-                detail=f"PDF appears to be scanned/image-based",
-            )
+            raise ExtractionError("PDF appears to be scanned/image-based")
         return text, "pdf"
 
     try:
         text = raw.decode("utf-8")
     except UnicodeDecodeError:
-        raise HTTPException(status_code=400, detail="File must be UTF-8 encoded text")
+        raise ExtractionError("File must be UTF-8 encoded text")
 
-    if filename.lower().endswith((".html", ".htm")):
-        from bs4 import BeautifulSoup
-        soup = BeautifulSoup(text, "html.parser")
-        return soup.get_text(separator="\n\n"), "html"
-    elif filename.lower().endswith(".md"):
+    if ext in (".html", ".htm"):
+        return strip_html(text), "html"
+    elif ext == ".md":
         return text, "markdown"
     return text, "text"
 
@@ -501,7 +503,10 @@ async def upload_source(
                 detail=f"File '{file.filename}' exceeds {settings.max_upload_size_mb}MB limit",
             )
         t_read = time.monotonic()
-        text, content_type = _extract_text(file.filename, raw)
+        try:
+            text, content_type = _extract_text(file.filename, raw)
+        except ExtractionError as e:
+            raise HTTPException(status_code=422, detail=str(e))
         t_extract = time.monotonic()
         logger.info(
             "upload %s: read=%.1fms extract=%.1fms size=%dKB",

@@ -90,7 +90,7 @@ class CreateSourceResponse(BaseModel):
 
 
 class PresignedFileRequest(BaseModel):
-    filename: str
+    filename: str = Field(..., min_length=1, max_length=255, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9._\- ]*$")
     content_type: str = "application/octet-stream"
 
 

@@ -19,7 +19,7 @@ from app.models.rag_model import RagModel
 from app.models.system_prompt_history import SystemPromptHistory
 from app.schemas.admin import ChunkResponse, ConversationDetailResponse, ConversationListResponse, \
     ConversationSummaryResponse, DailyStatsEntry, StatsResponse, SystemPromptHistoryResponse, TopSourceEntry
-from app.services.budget import get_current_month_usage
+from app.services.budget import check_budget, get_current_month_usage
 from app.services.generation import get_client
 
 router = APIRouter(tags=["admin"])
@@ -358,8 +358,12 @@ class GenerateSystemPromptRequest(BaseModel):
 async def generate_system_prompt(
         body: GenerateSystemPromptRequest,
         model: RagModel = Depends(require_model_auth),
+        session: AsyncSession = Depends(get_session),
 ):
     """Stream-generate a system prompt based on model info and user input."""
+    if not await check_budget(session, model):
+        raise HTTPException(status_code=429, detail="Model has exceeded its monthly budget")
+
     user_parts = [f"Bot name: {model.name}"]
     if model.description:
         user_parts.append(f"Bot description: {model.description}")
@@ -439,6 +443,9 @@ async def generate_sample_questions(
     session: AsyncSession = Depends(get_session),
 ):
     """Generate sample questions based on the model's knowledge base."""
+    if not await check_budget(session, model):
+        raise HTTPException(status_code=429, detail="Model has exceeded its monthly budget")
+
     # Grab a sample of chunk content to show the LLM what the KB covers
     result = await session.execute(
         select(ContentChunk.content)

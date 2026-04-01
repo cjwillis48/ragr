@@ -103,18 +103,6 @@ async def update_model(
     """Update a RAG model's configuration."""
     update_data = body.model_dump(exclude_unset=True)
 
-    # Only allow setting known mutable fields — prevents schema drift from writing unexpected attributes
-    _MUTABLE_FIELDS = {
-        "name", "description", "system_prompt", "chat_theme",
-        "chunk_size", "chunk_overlap", "similarity_threshold", "top_k",
-        "embedding_model", "generation_model",
-        "reranker_enabled", "rerank_model", "rerank_candidates", "rerank_threshold",
-        "keyword_search_enabled", "sample_questions",
-        "history_turns", "hosted_chat", "allowed_origins", "budget_limit",
-        "is_active", "custom_anthropic_key", "custom_voyage_key",
-    }
-    update_data = {k: v for k, v in update_data.items() if k in _MUTABLE_FIELDS}
-
     # Record system prompt change in history
     if "system_prompt" in update_data and update_data["system_prompt"] != model.system_prompt:
         session.add(SystemPromptHistory(
