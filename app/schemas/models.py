@@ -7,18 +7,21 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 _ORIGIN_RE = re.compile(r"^https?://[^\s/]+$")
 
 
+_HEX_COLOR = r"^#[0-9a-fA-F]{3,8}$"
+
+
 class ChatTheme(BaseModel):
-    label: str | None = None
-    greeting: str | None = None
-    placeholder: str | None = None
-    launcher_hint: str | None = None
-    primary_color: str | None = None
-    bg_color: str | None = None
-    text_color: str | None = None
-    user_bubble_color: str | None = None
-    bot_bubble_color: str | None = None
-    font_family: str | None = None
-    border_radius: int | None = None
+    label: str | None = Field(None, max_length=100)
+    greeting: str | None = Field(None, max_length=500)
+    placeholder: str | None = Field(None, max_length=200)
+    launcher_hint: str | None = Field(None, max_length=200)
+    primary_color: str | None = Field(None, pattern=_HEX_COLOR, max_length=9)
+    bg_color: str | None = Field(None, pattern=_HEX_COLOR, max_length=9)
+    text_color: str | None = Field(None, pattern=_HEX_COLOR, max_length=9)
+    user_bubble_color: str | None = Field(None, pattern=_HEX_COLOR, max_length=9)
+    bot_bubble_color: str | None = Field(None, pattern=_HEX_COLOR, max_length=9)
+    font_family: str | None = Field(None, max_length=100, pattern=r"^[a-zA-Z0-9 ,'\"-]+$")
+    border_radius: int | None = Field(None, ge=0, le=50)
     show_sample_questions_in_greeting: bool | None = None
 
 
@@ -80,14 +83,23 @@ class _RagModelFields(BaseModel):
     rerank_candidates: int | None = Field(None, ge=1, le=500)
     rerank_threshold: float | None = Field(None, ge=0.0, le=1.0)
     keyword_search_enabled: bool | None = None
-    sample_questions: list[str] | None = None
+    sample_questions: list[str] | None = Field(None, max_length=10)
     history_turns: int | None = Field(None, ge=0, le=50)
     max_tokens: int | None = Field(None, ge=1, le=8192)
     hosted_chat: bool | None = None
-    allowed_origins: list[str] | None = None
+    allowed_origins: list[str] | None = Field(None, max_length=50)
     budget_limit: float | None = Field(None, ge=0.0)
     custom_anthropic_key: str | None = None
     custom_voyage_key: str | None = None
+
+    @field_validator("sample_questions")
+    @classmethod
+    def validate_sample_question_length(cls, v: list[str] | None) -> list[str] | None:
+        if v is not None:
+            for q in v:
+                if len(q) > 500:
+                    raise ValueError("Each sample question must be 500 characters or fewer")
+        return v
 
     @model_validator(mode="after")
     def validate_models(self):

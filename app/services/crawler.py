@@ -1,5 +1,6 @@
 """Same-domain URL crawler for site-wide ingestion."""
 
+import fnmatch
 import logging
 from collections import deque
 from dataclasses import dataclass
@@ -82,7 +83,7 @@ async def crawl_site(
         url, depth = queue.popleft()
 
         # Check exclude patterns
-        if any(pattern in url for pattern in excludes):
+        if any(fnmatch.fnmatch(url, pattern) for pattern in excludes):
             continue
 
         try:
