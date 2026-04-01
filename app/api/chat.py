@@ -22,6 +22,27 @@ from app.services.generation import GenerationResult, generate_answer, generate_
 from app.services.retrieval import ChunkScore, RetrievalResult, retrieve_with_threshold
 
 _chat_limiter = RateLimiter(max_requests=settings.rate_limit_per_min, window_seconds=60)
+
+
+def _resolve_client_ip(request: Request) -> str:
+    """Extract the real client IP, trusting proxy headers only from known proxies."""
+    direct_ip = request.client.host if request.client else "unknown"
+    if not (settings.trusted_proxy_ips and direct_ip in settings.trusted_proxy_ips):
+        return direct_ip
+
+    forwarded_ip = (
+        # Cloudflare Tunnel: single authoritative client IP
+        request.headers.get("cf-connecting-ip")
+        # Standard reverse proxies (nginx, ALB): leftmost IP is the client
+        or request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+    )
+    if not forwarded_ip:
+        logger.warning(
+            "Trusted proxy %s did not set forwarding headers — "
+            "rate limiting will use the proxy IP, affecting all clients behind it",
+            direct_ip,
+        )
+    return forwarded_ip or direct_ip
 router = APIRouter(tags=["chat"])
 logger = logging.getLogger("ragr.chat")
 
@@ -119,24 +140,7 @@ async def chat(
     session: AsyncSession = Depends(get_session),
 ):
     """Query a model — public endpoint. Set stream: true for SSE."""
-    # Only trust proxy headers when the direct connection comes from a trusted proxy.
-    direct_ip = request.client.host if request.client else "unknown"
-    if settings.trusted_proxy_ips and direct_ip in settings.trusted_proxy_ips:
-        forwarded_ip = (
-            # Cloudflare Tunnel: single authoritative client IP
-            request.headers.get("cf-connecting-ip")
-            # Standard reverse proxies (nginx, ALB): leftmost IP is the client
-            or request.headers.get("x-forwarded-for", "").split(",")[0].strip()
-        )
-        if not forwarded_ip:
-            logger.warning(
-                "Trusted proxy %s did not set forwarding headers — "
-                "rate limiting will use the proxy IP, affecting all clients behind it",
-                direct_ip,
-            )
-        client_ip = forwarded_ip or direct_ip
-    else:
-        client_ip = direct_ip
+    client_ip = _resolve_client_ip(request)
     rate_key = f"{model.id}:{client_ip}"
     if not _chat_limiter.is_allowed(rate_key):
         raise HTTPException(status_code=429, detail="Rate limit exceeded. Please wait before trying again.")

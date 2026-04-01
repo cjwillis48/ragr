@@ -62,7 +62,7 @@ async def _vector_search(
         .limit(limit)
     )
     result = await session.execute(stmt)
-    return list(result.all())
+    return [row.tuple() for row in result.all()]
 
 
 async def _keyword_search(
@@ -84,7 +84,7 @@ async def _keyword_search(
         .limit(limit)
     )
     result = await session.execute(stmt)
-    return list(result.all())
+    return [row.tuple() for row in result.all()]
 
 
 def _rrf_merge(
@@ -116,6 +116,31 @@ def _rrf_merge(
     sorted_ids = sorted(scores, key=lambda cid: scores[cid], reverse=True)[:limit]
     chunks = [chunk_map[cid] for cid in sorted_ids]
     return chunks, distances, keyword_ranks
+
+
+async def _rerank_chunks(
+    model: RagModel,
+    query: str,
+    chunks: list[ContentChunk],
+) -> tuple[list[ContentChunk], dict[int, float], int]:
+    """Rerank chunks using Voyage, applying score threshold. Returns (chunks, scores, tokens)."""
+    if not model.reranker_enabled or len(chunks) <= 1:
+        return chunks, {}, 0
+
+    rerank_result = await rerank(
+        query=query,
+        documents=[c.content for c in chunks],
+        model=model.rerank_model,
+        top_k=model.top_k,
+        voyage_api_key=model.custom_voyage_key,
+    )
+    rerank_scores = {chunks[i].id: s for i, s in zip(rerank_result.indices, rerank_result.scores)}
+    reranked = [chunks[i] for i in rerank_result.indices]
+
+    if model.rerank_threshold and model.rerank_threshold > 0:
+        reranked = [c for c in reranked if rerank_scores.get(c.id, 0) >= model.rerank_threshold]
+
+    return reranked, rerank_scores, rerank_result.total_tokens
 
 
 async def retrieve_with_threshold(
@@ -153,23 +178,7 @@ async def retrieve_with_threshold(
         model.similarity_threshold, (time.perf_counter() - t0) * 1000, query[:60],
     )
 
-    rerank_tokens = 0
-    rerank_scores: dict[int, float] = {}
-    if model.reranker_enabled and len(chunks) > 1:
-        rerank_result = await rerank(
-            query=query,
-            documents=[c.content for c in chunks],
-            model=model.rerank_model,
-            top_k=model.top_k,
-            voyage_api_key=model.custom_voyage_key,
-        )
-        rerank_scores = {chunks[i].id: s for i, s in zip(rerank_result.indices, rerank_result.scores)}
-        chunks = [chunks[i] for i in rerank_result.indices]
-        rerank_tokens = rerank_result.total_tokens
-
-        # Drop chunks below the rerank score threshold
-        if model.rerank_threshold and model.rerank_threshold > 0:
-            chunks = [c for c in chunks if rerank_scores.get(c.id, 0) >= model.rerank_threshold]
+    chunks, rerank_scores, rerank_tokens = await _rerank_chunks(model, query, chunks)
 
     scores = [
         ChunkScore(

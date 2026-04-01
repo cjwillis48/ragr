@@ -36,7 +36,8 @@ _clients = ClientCache(
 )
 
 
-def _get_client(api_key: str | None = None) -> anthropic.AsyncAnthropic:
+def get_client(api_key: str | None = None) -> anthropic.AsyncAnthropic:
+    """Get an Anthropic client, using a cached custom-key client if provided."""
     return _clients.get(api_key)
 
 
@@ -115,7 +116,7 @@ async def generate_answer(
     """Generate an answer using retrieved context."""
     system, messages = _build_prompt(model, question, chunks, total_chunks, history)
 
-    client = _get_client(model.custom_anthropic_key)
+    client = get_client(model.custom_anthropic_key)
     response = await client.messages.create(
         model=model.generation_model,
         max_tokens=settings.default_max_tokens,
@@ -156,7 +157,7 @@ async def generate_answer_stream(
     """
     system, messages = _build_prompt(model, question, chunks, total_chunks, history)
 
-    client = _get_client(model.custom_anthropic_key)
+    client = get_client(model.custom_anthropic_key)
     full_answer = ""
     input_tokens = 0
     output_tokens = 0

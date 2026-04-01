@@ -2,6 +2,7 @@ import json
 import logging
 from datetime import UTC, datetime, timedelta
 
+from anthropic.types import MessageParam
 from fastapi import APIRouter, Depends, Query, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -19,6 +20,7 @@ from app.models.system_prompt_history import SystemPromptHistory
 from app.schemas.admin import ChunkResponse, ConversationDetailResponse, ConversationListResponse, \
     ConversationSummaryResponse, DailyStatsEntry, StatsResponse, SystemPromptHistoryResponse, TopSourceEntry
 from app.services.budget import get_current_month_usage
+from app.services.generation import get_client
 
 router = APIRouter(tags=["admin"])
 logger = logging.getLogger("ragr.admin")
@@ -366,8 +368,7 @@ async def generate_system_prompt(
 
     user_message = "\n\n".join(user_parts)
 
-    from app.services.generation import _get_client
-    client = _get_client(model.custom_anthropic_key)
+    client = get_client(model.custom_anthropic_key)
 
     async def stream():
         try:
@@ -457,14 +458,13 @@ async def generate_sample_questions(
 
     user_message = "\n\n".join(user_parts)
 
-    from app.services.generation import _get_client
-    client = _get_client(model.custom_anthropic_key)
-
+    client = get_client(model.custom_anthropic_key)
+    message: MessageParam = {"role": "user", "content": user_message}
     response = await client.messages.create(
         model="claude-haiku-4-5",
         max_tokens=512,
         system=_SAMPLE_QUESTIONS_GENERATOR,
-        messages=[{"role": "user", "content": user_message}],
+        messages=[message],
     )
 
     raw = response.content[0].text.strip()
