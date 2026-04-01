@@ -7,6 +7,7 @@ from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup
 
+from app.services.html import strip_html
 from app.services.url_validation import safe_get
 
 logger = logging.getLogger("ragr.crawler")
@@ -101,10 +102,7 @@ async def crawl_site(
             continue
 
         raw_html = resp.text
-        soup = BeautifulSoup(raw_html, "html.parser")
-        for tag in soup(["script", "style", "nav", "footer", "head"]):
-            tag.decompose()
-        text = soup.get_text(separator="\n\n").strip()
+        text = strip_html(raw_html)
 
         if not text or len(text) < 50:
             continue

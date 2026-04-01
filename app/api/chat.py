@@ -119,12 +119,24 @@ async def chat(
     session: AsyncSession = Depends(get_session),
 ):
     """Query a model — public endpoint. Set stream: true for SSE."""
-    # Prefer CF-Connecting-IP (Cloudflare Tunnel) > X-Forwarded-For > direct connection
-    client_ip = (
-        request.headers.get("cf-connecting-ip")
-        or (request.headers.get("x-forwarded-for", "").split(",")[0].strip())
-        or (request.client.host if request.client else "unknown")
-    )
+    # Only trust proxy headers when the direct connection comes from a trusted proxy.
+    direct_ip = request.client.host if request.client else "unknown"
+    if settings.trusted_proxy_ips and direct_ip in settings.trusted_proxy_ips:
+        forwarded_ip = (
+            # Cloudflare Tunnel: single authoritative client IP
+            request.headers.get("cf-connecting-ip")
+            # Standard reverse proxies (nginx, ALB): leftmost IP is the client
+            or request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+        )
+        if not forwarded_ip:
+            logger.warning(
+                "Trusted proxy %s did not set forwarding headers — "
+                "rate limiting will use the proxy IP, affecting all clients behind it",
+                direct_ip,
+            )
+        client_ip = forwarded_ip or direct_ip
+    else:
+        client_ip = direct_ip
     rate_key = f"{model.id}:{client_ip}"
     if not _chat_limiter.is_allowed(rate_key):
         raise HTTPException(status_code=429, detail="Rate limit exceeded. Please wait before trying again.")

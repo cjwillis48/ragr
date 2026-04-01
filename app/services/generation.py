@@ -1,4 +1,3 @@
-import hashlib
 import logging
 import re
 import time
@@ -11,7 +10,10 @@ import httpx
 from app.config import settings
 from app.models.content import ContentChunk
 from app.models.rag_model import RagModel
+from app.services.client_cache import ClientCache
 
+_ANTHROPIC_MAX_RETRIES=4
+_ANTHROPIC_TIMEOUT=60.0
 
 @dataclass
 class GenerationResult:
@@ -22,32 +24,20 @@ class GenerationResult:
 
 logger = logging.getLogger("ragr.generation")
 
-_platform_client: anthropic.AsyncAnthropic | None = None
-
 _META_RE = re.compile(r'\s*<meta\s+status="(answered|unanswered|off_topic)"\s*/>\s*$')
 
-# TTL cache for custom-key clients: hash(key) -> (client, created_at)
-_client_cache: dict[str, tuple[anthropic.AsyncAnthropic, float]] = {}
-_CLIENT_TTL = 300  # 5 minutes
+_clients = ClientCache(
+    platform_factory=lambda: anthropic.AsyncAnthropic(
+        api_key=settings.anthropic_api_key, max_retries=_ANTHROPIC_MAX_RETRIES, timeout=_ANTHROPIC_TIMEOUT,
+    ),
+    custom_factory=lambda key: anthropic.AsyncAnthropic(
+        api_key=key, max_retries=_ANTHROPIC_MAX_RETRIES, timeout=_ANTHROPIC_TIMEOUT,
+    ),
+)
 
 
 def _get_client(api_key: str | None = None) -> anthropic.AsyncAnthropic:
-    if api_key:
-        key_hash = hashlib.sha256(api_key.encode()).hexdigest()
-        entry = _client_cache.get(key_hash)
-        if entry and (time.monotonic() - entry[1]) < _CLIENT_TTL:
-            return entry[0]
-        client = anthropic.AsyncAnthropic(api_key=api_key, max_retries=4, timeout=60.0)
-        _client_cache[key_hash] = (client, time.monotonic())
-        return client
-    global _platform_client
-    if _platform_client is None:
-        _platform_client = anthropic.AsyncAnthropic(
-            api_key=settings.anthropic_api_key,
-            max_retries=4,
-            timeout=60.0,
-        )
-    return _platform_client
+    return _clients.get(api_key)
 
 
 def _build_prompt(
@@ -56,7 +46,7 @@ def _build_prompt(
     chunks: list[ContentChunk],
     total_chunks: int = 0,
     history: list[dict] | None = None,
-) -> tuple[str, list[dict]]:
+) -> tuple[list[dict], list[dict]]:
     """Build system prompt and messages array. Returns (system, messages)."""
     def _fmt_chunk(chunk) -> str:
         if chunk.source_url and chunk.source_url.startswith("http"):

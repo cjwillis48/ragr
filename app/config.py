@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     r2_bucket_name: str = "ragr-uploads"
     r2_presigned_expiry: int = 3600
 
+    trusted_proxy_ips: list[str] = []
     rate_limit_per_min: int = 10
     max_upload_size_mb: int = 50
     max_upload_files: int = 20

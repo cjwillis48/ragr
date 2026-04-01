@@ -53,12 +53,35 @@ from app.schemas.sources import (
     SourceListResponse,
     SourceResponse,
 )
+from app.services.html import strip_html
 from app.services.ingest import ingest_content
 from app.services.r2 import is_configured as r2_is_configured
 from app.services.url_validation import SSRFError, safe_get, validate_url
 
 router = APIRouter(tags=["sources"])
 logger = logging.getLogger("ragr.sources")
+
+
+async def _mark_source_failed(model_id: int, source_identifier: str) -> None:
+    """Mark a source as failed using a fresh DB session.
+
+    Uses a new session because the caller's session may be in a broken
+    state (e.g. after a DB error or rolled-back transaction).
+    """
+    try:
+        async with async_session() as session:
+            result = await session.execute(
+                select(IngestionSource).where(
+                    IngestionSource.model_id == model_id,
+                    IngestionSource.source_identifier == source_identifier,
+                )
+            )
+            src = result.scalar_one_or_none()
+            if src:
+                src.status = "failed"
+                await session.commit()
+    except Exception:
+        logger.error("Failed to mark source as failed: %s", source_identifier, exc_info=True)
 
 
 @router.get(
@@ -228,7 +251,6 @@ async def _ingest_url_background(model_id: int, url: str, source_identifier: str
             resp = await safe_get(url, timeout=30, follow_redirects=True)
             resp.raise_for_status()
 
-            # Guard against oversized responses
             content_length = int(resp.headers.get("content-length", 0))
             if content_length > max_bytes:
                 raise ValueError(f"Response too large: {content_length} bytes")
@@ -236,17 +258,11 @@ async def _ingest_url_background(model_id: int, url: str, source_identifier: str
                 raise ValueError(f"Response body too large: {len(resp.content)} bytes")
 
             content_type_header = resp.headers.get("content-type", "")
-            raw_text = resp.text
-
             if "html" in content_type_header:
-                from bs4 import BeautifulSoup
-                soup = BeautifulSoup(raw_text, "html.parser")
-                for tag in soup(["script", "style", "nav", "footer", "head"]):
-                    tag.decompose()
-                text = soup.get_text(separator="\n\n").strip()
+                text = strip_html(resp.text)
                 ct = "html"
             else:
-                text = raw_text
+                text = resp.text
                 ct = "text"
 
             ingest_result = await ingest_content(
@@ -263,18 +279,7 @@ async def _ingest_url_background(model_id: int, url: str, source_identifier: str
             )
         except Exception:
             logger.exception("URL ingestion failed for %s", url)
-            # Mark failed
-            async with async_session() as err_session:
-                err_result = await err_session.execute(
-                    select(IngestionSource).where(
-                        IngestionSource.model_id == model_id,
-                        IngestionSource.source_identifier == source_identifier,
-                    )
-                )
-                err_src = err_result.scalar_one_or_none()
-                if err_src:
-                    err_src.status = "failed"
-                    await err_session.commit()
+            await _mark_source_failed(model_id, source_identifier)
 
 
 async def _ingest_file_background_with_status(
@@ -285,8 +290,6 @@ async def _ingest_file_background_with_status(
 ) -> None:
     """Run file ingestion in the background, updating status on completion."""
     async with _ingest_semaphore, async_session() as session:
-        from app.models.rag_model import RagModel
-
         result = await session.execute(select(RagModel).where(RagModel.id == model_id))
         model = result.scalar_one()
 
@@ -308,17 +311,7 @@ async def _ingest_file_background_with_status(
                 )
         except Exception:
             logger.exception("File ingestion failed for %s", source_identifier)
-            async with async_session() as err_session:
-                err_result = await err_session.execute(
-                    select(IngestionSource).where(
-                        IngestionSource.model_id == model_id,
-                        IngestionSource.source_identifier == source_identifier,
-                    )
-                )
-                err_src = err_result.scalar_one_or_none()
-                if err_src:
-                    err_src.status = "failed"
-                    await err_session.commit()
+            await _mark_source_failed(model_id, source_identifier)
 
 
 @router.post(
@@ -693,17 +686,7 @@ async def _ingest_r2_file_background(
             logger.info("R2 file %s: ingested successfully", filename)
         except Exception:
             logger.exception("R2 file ingestion failed for %s", filename)
-            async with async_session() as err_session:
-                err_result = await err_session.execute(
-                    select(IngestionSource).where(
-                        IngestionSource.model_id == model_id,
-                        IngestionSource.source_identifier == filename,
-                    )
-                )
-                err_src = err_result.scalar_one_or_none()
-                if err_src:
-                    err_src.status = "failed"
-                    await err_session.commit()
+            await _mark_source_failed(model_id, filename)
         finally:
             try:
                 await delete_object(object_key)

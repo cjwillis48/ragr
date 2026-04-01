@@ -1,4 +1,3 @@
-import hashlib
 import logging
 import time
 from dataclasses import dataclass
@@ -6,6 +5,7 @@ from dataclasses import dataclass
 import voyageai
 
 from app.config import settings
+from app.services.client_cache import ClientCache
 
 
 @dataclass
@@ -13,28 +13,16 @@ class EmbedResult:
     embeddings: list[list[float]]
     total_tokens: int
 
-_platform_client: voyageai.AsyncClient | None = None
-
 logger = logging.getLogger("ragr.embedder")
 
-# TTL cache for custom-key clients: hash(key) -> (client, created_at)
-_client_cache: dict[str, tuple[voyageai.AsyncClient, float]] = {}
-_CLIENT_TTL = 300  # 5 minutes
+_clients = ClientCache(
+    platform_factory=lambda: voyageai.AsyncClient(api_key=settings.voyage_api_key, timeout=30),
+    custom_factory=lambda key: voyageai.AsyncClient(api_key=key, timeout=30),
+)
 
 
 def _get_client(api_key: str | None = None) -> voyageai.AsyncClient:
-    if api_key:
-        key_hash = hashlib.sha256(api_key.encode()).hexdigest()
-        entry = _client_cache.get(key_hash)
-        if entry and (time.monotonic() - entry[1]) < _CLIENT_TTL:
-            return entry[0]
-        client = voyageai.AsyncClient(api_key=api_key, timeout=30)
-        _client_cache[key_hash] = (client, time.monotonic())
-        return client
-    global _platform_client
-    if _platform_client is None:
-        _platform_client = voyageai.AsyncClient(api_key=settings.voyage_api_key, timeout=30)
-    return _platform_client
+    return _clients.get(api_key)
 
 
 async def embed_texts(

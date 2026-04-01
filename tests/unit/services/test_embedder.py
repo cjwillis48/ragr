@@ -1,17 +1,18 @@
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 import app.services.embedder as embedder_module
-from app.services.embedder import embed_texts, embed_query, EmbedResult
+from app.services.embedder import embed_texts, embed_query
 
 
 @pytest.fixture(autouse=True)
 def reset_embedder_globals():
-    embedder_module._platform_client = None
-    embedder_module._client_cache.clear()
+    embedder_module._clients._platform_client = None
+    embedder_module._clients._cache.clear()
     yield
-    embedder_module._platform_client = None
-    embedder_module._client_cache.clear()
+    embedder_module._clients._platform_client = None
+    embedder_module._clients._cache.clear()
 
 
 def _mock_embed_response(n_texts: int, tokens: int = 100):

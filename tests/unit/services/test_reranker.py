@@ -7,11 +7,11 @@ from app.services.reranker import rerank, RerankResult
 
 @pytest.fixture(autouse=True)
 def reset_reranker_globals():
-    reranker_module._platform_client = None
-    reranker_module._client_cache.clear()
+    reranker_module._clients._platform_client = None
+    reranker_module._clients._cache.clear()
     yield
-    reranker_module._platform_client = None
-    reranker_module._client_cache.clear()
+    reranker_module._clients._platform_client = None
+    reranker_module._clients._cache.clear()
 
 
 def _mock_rerank_response(indices, scores, tokens=100):
