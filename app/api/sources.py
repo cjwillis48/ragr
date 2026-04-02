@@ -375,7 +375,7 @@ async def create_source(
 
     # Normalise single url into a list; source_identifier only applies to single url
     urls = url_list
-    source_ids = [url for url in urls] if has_urls else [body.source_identifier or body.url]
+    source_ids = list(urls) if has_urls else [body.source_identifier or body.url]
 
     # Single query to find all existing sources
     existing_result = await session.execute(

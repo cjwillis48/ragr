@@ -3,7 +3,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.cors import sync_origins
+from app.middleware.cors import sync_origins
 from app.database import get_session
 from app.dependencies import (
     ClerkUser,

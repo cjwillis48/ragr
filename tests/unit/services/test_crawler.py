@@ -128,7 +128,7 @@ class TestCrawlSite:
             mp.setattr("app.services.crawler.safe_get", mock_get)
             results = await crawl_site(
                 "https://example.com/admin/page",
-                exclude_patterns=["/admin"],
+                exclude_patterns=["*/admin/*"],
             )
 
         assert len(results) == 0

@@ -9,7 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.cors import DynamicCORSMiddleware, sync_origins
+from app.middleware.cors import DynamicCORSMiddleware, sync_origins
 from app.database import async_session, engine, get_session
 from app.middleware.request_id import RequestIdFilter, RequestIdMiddleware
 

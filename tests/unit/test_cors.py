@@ -1,7 +1,10 @@
 from unittest.mock import patch
 
-import app.cors as cors_module
-from app.cors import DynamicCORSMiddleware, _origins_by_slug, _SLUG_RE
+# cors.py imports settings locally inside __call__, so we patch at the source
+_SETTINGS_PATCH = "app.config.settings"
+
+import app.middleware.cors as cors_module
+from app.middleware.cors import DynamicCORSMiddleware, _origins_by_slug, _SLUG_RE
 
 
 class TestSlugRegex:

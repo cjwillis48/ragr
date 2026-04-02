@@ -125,7 +125,7 @@ class CrawlRequest(BaseModel):
     max_pages: int = Field(50, ge=1, le=200)
     max_depth: int = Field(3, ge=1, le=5)
     prefix: str | None = None
-    exclude_patterns: list[str] | None = None
+    exclude_patterns: list[str] | None = Field(None, description="Glob patterns to exclude (e.g. '*/admin/*', '*.pdf')")
 
     @field_validator("url")
     @classmethod
