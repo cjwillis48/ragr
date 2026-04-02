@@ -77,6 +77,6 @@ async def sync_origins(session: AsyncSession) -> None:
     for slug, model_origins in result.all():
         new_map[slug] = list(model_origins) if model_origins else []
 
-    _origins_by_slug.clear()
-    _origins_by_slug.update(new_map)
-    logger.info("CORS origins synced: %s", {k: v for k, v in _origins_by_slug.items() if v})
+    global _origins_by_slug
+    _origins_by_slug = new_map
+    logger.info("CORS origins synced: %s", {k: v for k, v in new_map.items() if v})

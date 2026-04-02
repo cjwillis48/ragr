@@ -2,7 +2,18 @@
 name = "ragr"
 version = "0.3.0"
 description = "Multi-tenant RAG platform"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [{name = "Charlie Willis"}]
 requires-python = ">=3.12"
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+]
+
+[project.urls]
+Repository = "https://github.com/cjwillis48/ragr"
 dependencies = [
     "alembic>=1.18.4",
     "bcrypt>=4.0.0",

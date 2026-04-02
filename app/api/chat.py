@@ -24,6 +24,10 @@ from app.services.retrieval import ChunkScore, RetrievalResult, retrieve_with_th
 _chat_limiter = RateLimiter(max_requests=settings.rate_limit_per_min, window_seconds=60)
 
 
+router = APIRouter(tags=["chat"])
+logger = logging.getLogger("ragr.chat")
+
+
 def _resolve_client_ip(request: Request) -> str:
     """Extract the real client IP, trusting proxy headers only from known proxies."""
     direct_ip = request.client.host if request.client else "unknown"
@@ -43,8 +47,6 @@ def _resolve_client_ip(request: Request) -> str:
             direct_ip,
         )
     return forwarded_ip or direct_ip
-router = APIRouter(tags=["chat"])
-logger = logging.getLogger("ragr.chat")
 
 
 async def _load_session_history(
@@ -99,6 +101,7 @@ async def _log_message(
         select(Conversation).where(
             Conversation.model_id == model.id,
             Conversation.session_id == effective_session_id,
+            Conversation.deleted_at.is_(None),
         )
     )
     conversation = result.scalar_one_or_none()

@@ -52,9 +52,9 @@ def _validate_http_url(url: str) -> str:
 class CreateSourceRequest(BaseModel):
     """Unified source creation request. Provide content, url, or urls."""
     source_identifier: str | None = None
-    content: str | None = Field(default=None, min_length=1)
+    content: str | None = Field(default=None, min_length=1, max_length=500_000)
     url: str | None = None
-    urls: list[str] | None = None
+    urls: list[str] | None = Field(default=None, max_length=200)
     content_type: str = "text"
     source_url: str = ""
 

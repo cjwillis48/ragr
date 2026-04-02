@@ -1,3 +1,4 @@
+import asyncio
 import secrets
 
 import bcrypt
@@ -32,7 +33,7 @@ async def create_api_key(
 ):
     """Generate a new API key for a model. The raw key is only returned once."""
     raw_key = _generate_key()
-    key_hash = bcrypt.hashpw(raw_key.encode(), bcrypt.gensalt()).decode()
+    key_hash = await asyncio.to_thread(lambda: bcrypt.hashpw(raw_key.encode(), bcrypt.gensalt()).decode())
 
     api_key = ModelApiKey(
         model_id=model.id,

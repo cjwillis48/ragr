@@ -46,7 +46,7 @@ class TestIngestContent:
 
 
         content = "test content"
-        h = f"{content}:chunk_size={sample_model.chunk_size}:chunk_overlap={sample_model.chunk_overlap}"
+        h = f"{content}:chunk_size={sample_model.chunk_size}:chunk_overlap={sample_model.chunk_overlap}:embedding={sample_model.embedding_model}"
         expected_hash = hashlib.sha256(h.encode()).hexdigest()
 
         existing = MagicMock()
@@ -108,7 +108,7 @@ class TestIngestContent:
 
 
         content = "test"
-        h = f"{content}:chunk_size={sample_model.chunk_size}:chunk_overlap={sample_model.chunk_overlap}"
+        h = f"{content}:chunk_size={sample_model.chunk_size}:chunk_overlap={sample_model.chunk_overlap}:embedding={sample_model.embedding_model}"
         expected_hash = hashlib.sha256(h.encode()).hexdigest()
 
         existing = MagicMock()

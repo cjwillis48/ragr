@@ -173,9 +173,9 @@ async def retrieve_with_threshold(
     chunks, distances, keyword_ranks = _rrf_merge(vector_rows, keyword_rows, candidate_limit)
 
     logger.info(
-        "retrieval model_id=%d vector=%d keyword=%d merged=%d threshold=%.2f db=%.0fms query='%s'",
+        "retrieval model_id=%d vector=%d keyword=%d merged=%d threshold=%.2f db=%.0fms",
         model.id, len(vector_rows), len(keyword_rows), len(chunks),
-        model.similarity_threshold, (time.perf_counter() - t0) * 1000, query[:60],
+        model.similarity_threshold, (time.perf_counter() - t0) * 1000,
     )
 
     chunks, rerank_scores, rerank_tokens = await _rerank_chunks(model, query, chunks)

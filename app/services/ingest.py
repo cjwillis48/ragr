@@ -36,7 +36,7 @@ async def ingest_content(
     If changed, delete old chunks and re-embed.
     """
     def _compute_hash() -> str:
-        h = f"{content}:chunk_size={model.chunk_size}:chunk_overlap={model.chunk_overlap}"
+        h = f"{content}:chunk_size={model.chunk_size}:chunk_overlap={model.chunk_overlap}:embedding={model.embedding_model}"
         return hashlib.sha256(h.encode()).hexdigest()
 
     content_hash = _compute_hash()

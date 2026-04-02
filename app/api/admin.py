@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from anthropic.types import MessageParam
 from fastapi import APIRouter, Depends, Query, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import Date, cast, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -351,7 +351,7 @@ Respond with ONLY the system prompt text, no explanations or markdown."""
 
 
 class GenerateSystemPromptRequest(BaseModel):
-    input_text: str = ""
+    input_text: str = Field("", max_length=5000)
 
 
 @router.post("/models/{slug}/generate-system-prompt")
@@ -393,8 +393,8 @@ async def generate_system_prompt(
 
 
 class AcceptGeneratedPromptRequest(BaseModel):
-    prompt_text: str
-    input_text: str = ""
+    prompt_text: str = Field(..., min_length=1, max_length=10_000)
+    input_text: str = Field("", max_length=5000)
 
 
 @router.post(

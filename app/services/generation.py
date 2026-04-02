@@ -223,20 +223,9 @@ async def generate_answer_stream(
             except Exception:
                 logger.warning("get_final_message() failed — token counts unavailable")
                 logger.info("stream_done total=%.0fms (no token counts)", (time.perf_counter() - t_start) * 1000)
-    except anthropic.APIStatusError as e:
-        logger.warning(
-            "Anthropic API error during stream (status=%s) — yielding result with available data",
-            e.status_code,
-        )
-    except anthropic.APIConnectionError as e:
-        # Covers APITimeoutError (SDK-level timeout) and other connection failures
-        logger.error("Anthropic connection error during stream (%s) — yielding result with available data", type(e).__name__)
-    except httpx.TimeoutException as e:
-        logger.error("Anthropic stream timed out (%s) — yielding result with available data", type(e).__name__)
-    except httpx.ConnectError as e:
-        logger.error("Anthropic connection failed (%s) — yielding result with available data", e)
-    except httpx.RemoteProtocolError as e:
-        logger.error("Anthropic remote protocol error (%s) — yielding result with available data", e)
+    except (anthropic.APIStatusError, anthropic.APIConnectionError, httpx.TimeoutException, httpx.ConnectError, httpx.RemoteProtocolError):
+        # Let errors propagate so callers (_stream_response) can send proper SSE error events
+        raise
 
     answer, status = _parse_meta(full_answer)
     yield GenerationResult(

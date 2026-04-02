@@ -738,16 +738,7 @@ async def _crawl_site_background(model_id: int, crawl_request: CrawlRequest) -> 
                     logger.info("Crawl ingest complete: %s", page.url)
                 except Exception:
                     logger.exception("Crawl ingest failed for %s", page.url)
-                    err_result = await session.execute(
-                        select(IngestionSource).where(
-                            IngestionSource.model_id == model_id,
-                            IngestionSource.source_identifier == page.url,
-                        )
-                    )
-                    err_src = err_result.scalar_one_or_none()
-                    if err_src:
-                        err_src.status = "failed"
-                        await session.commit()
+                    await _mark_source_failed(model_id, page.url)
 
 
 @router.post(
