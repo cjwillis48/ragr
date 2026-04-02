@@ -23,7 +23,7 @@ def _create_background_task(coro, *, name: str | None = None) -> asyncio.Task:
             return
         exc = t.exception()
         if exc:
-            logger.error("Background task %s failed: %s", t.get_name(), exc, exc_info=exc)
+            logger.error("background_task_failed", extra={"task": t.get_name(), "error": str(exc)}, exc_info=exc)
 
     task.add_done_callback(_done_callback)
     return task
@@ -88,7 +88,7 @@ async def _mark_source_failed(model_id: int, source_identifier: str) -> None:
                 src.status = "failed"
                 await session.commit()
     except Exception:
-        logger.error("Failed to mark source as failed: %s", source_identifier, exc_info=True)
+        logger.error("mark_source_failed_error", extra={"model_id": model_id, "source": source_identifier}, exc_info=True)
 
 
 @router.get(
@@ -280,12 +280,9 @@ async def _ingest_url_background(model_id: int, url: str, source_identifier: str
                 content_type=ct,
                 source_url=url,
             )
-            logger.info(
-                "URL %s: ingested %d chunks (cost: $%.6f)",
-                url, ingest_result.chunk_count, ingest_result.embedding_cost,
-            )
+            logger.info("url_ingested", extra={"model_id": model_id, "url": url, "chunks": ingest_result.chunk_count, "cost": ingest_result.embedding_cost})
         except Exception:
-            logger.exception("URL ingestion failed for %s", url)
+            logger.exception("url_ingestion_failed", extra={"model_id": model_id, "url": url})
             await _mark_source_failed(model_id, source_identifier)
 
 
@@ -310,14 +307,11 @@ async def _ingest_file_background_with_status(
                 source_url=source_identifier,
             )
             if ingest_result.skipped:
-                logger.info("File %s: content unchanged, skipped", source_identifier)
+                logger.info("file_skipped", extra={"model_id": model_id, "source": source_identifier})
             else:
-                logger.info(
-                    "File %s: ingested %d chunks (cost: $%.6f)",
-                    source_identifier, ingest_result.chunk_count, ingest_result.embedding_cost,
-                )
+                logger.info("file_ingested", extra={"model_id": model_id, "source": source_identifier, "chunks": ingest_result.chunk_count, "cost": ingest_result.embedding_cost})
         except Exception:
-            logger.exception("File ingestion failed for %s", source_identifier)
+            logger.exception("file_ingestion_failed", extra={"model_id": model_id, "source": source_identifier})
             await _mark_source_failed(model_id, source_identifier)
 
 
@@ -442,7 +436,7 @@ def _extract_text(filename: str, raw: bytes) -> tuple[str, str]:
         text = "\n\n".join(pages)
         page_count = len(pages)
         char_count = len(text.strip())
-        logger.info("PDF %s: %d pages, %d chars extracted", filename, page_count, char_count)
+        logger.info("pdf_extracted", extra={"filename": filename, "pages": page_count, "chars": char_count})
         if char_count < 100:
             raise ExtractionError("PDF appears to be scanned/image-based")
         return text, "pdf"
@@ -508,13 +502,10 @@ async def upload_source(
         except ExtractionError as e:
             raise HTTPException(status_code=422, detail=str(e))
         t_extract = time.monotonic()
-        logger.info(
-            "upload %s: read=%.1fms extract=%.1fms size=%dKB",
-            file.filename,
-            (t_read - t0) * 1000,
-            (t_extract - t_read) * 1000,
-            len(raw) // 1024,
-        )
+        logger.info("upload_extracted", extra={
+            "filename": file.filename, "read_ms": round((t_read - t0) * 1000, 1),
+            "extract_ms": round((t_extract - t_read) * 1000, 1), "size_kb": len(raw) // 1024,
+        })
         prepared_files.append((file.filename, text, content_type))
         t0 = time.monotonic()
 
@@ -548,7 +539,7 @@ async def upload_source(
         ))
 
     await session.commit()
-    logger.info("upload db upserts: %.1fms for %d files", (time.monotonic() - t_db) * 1000, len(prepared_files))
+    logger.info("upload_db_upserts", extra={"duration_ms": round((time.monotonic() - t_db) * 1000, 1), "files": len(prepared_files)})
 
     for filename, text, content_type in prepared_files:
         _create_background_task(
@@ -688,15 +679,15 @@ async def _ingest_r2_file_background(
                     content_type=content_type,
                     source_url=filename,
                 )
-            logger.info("R2 file %s: ingested successfully", filename)
+            logger.info("r2_file_ingested", extra={"model_id": model_id, "filename": filename})
         except Exception:
-            logger.exception("R2 file ingestion failed for %s", filename)
+            logger.exception("r2_file_ingestion_failed", extra={"model_id": model_id, "filename": filename})
             await _mark_source_failed(model_id, filename)
         finally:
             try:
                 await delete_object(object_key)
             except Exception:
-                logger.warning("Failed to delete R2 object %s", object_key)
+                logger.warning("r2_delete_failed", extra={"object_key": object_key})
 
 
 # ---------------------------------------------------------------------------
@@ -717,7 +708,7 @@ async def _crawl_site_background(model_id: int, crawl_request: CrawlRequest) -> 
             exclude_patterns=crawl_request.exclude_patterns,
         )
     except Exception:
-        logger.exception("Crawl failed for %s", crawl_request.url)
+        logger.exception("crawl_failed", extra={"model_id": model_id, "url": crawl_request.url})
         return
 
     for page in pages:
@@ -735,9 +726,9 @@ async def _crawl_site_background(model_id: int, crawl_request: CrawlRequest) -> 
                         content_type=page.content_type,
                         source_url=page.url,
                     )
-                    logger.info("Crawl ingest complete: %s", page.url)
+                    logger.info("crawl_ingest_complete", extra={"model_id": model_id, "url": page.url})
                 except Exception:
-                    logger.exception("Crawl ingest failed for %s", page.url)
+                    logger.exception("crawl_ingest_failed", extra={"model_id": model_id, "url": page.url})
                     await _mark_source_failed(model_id, page.url)
 
 

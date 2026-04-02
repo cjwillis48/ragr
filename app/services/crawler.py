@@ -90,12 +90,12 @@ async def crawl_site(
             resp = await safe_get(url, timeout=30, follow_redirects=True)
             resp.raise_for_status()
         except Exception:
-            logger.warning("Failed to fetch %s, skipping", url)
+            logger.warning("crawl_fetch_failed", extra={"url": url})
             continue
 
         # Skip oversized pages (10MB limit per page)
         if len(resp.content) > 10 * 1024 * 1024:
-            logger.warning("Skipping oversized page %s (%d bytes)", url, len(resp.content))
+            logger.warning("crawl_page_oversized", extra={"url": url, "bytes": len(resp.content)})
             continue
 
         content_type_header = resp.headers.get("content-type", "")
@@ -109,7 +109,7 @@ async def crawl_site(
             continue
 
         results.append(CrawledPage(url=url, text=text, content_type="html"))
-        logger.info("Crawled %s (%d chars, depth %d, %d/%d pages)", url, len(text), depth, len(results), max_pages)
+        logger.info("crawled_page", extra={"url": url, "chars": len(text), "depth": depth, "page": len(results), "max_pages": max_pages})
 
         # Discover links if we haven't hit depth limit
         if depth < max_depth:
@@ -118,5 +118,5 @@ async def crawl_site(
                     visited.add(link)
                     queue.append((link, depth + 1))
 
-    logger.info("Crawl complete: %d pages from %s", len(results), root_url)
+    logger.info("crawl_complete", extra={"pages": len(results), "root_url": root_url})
     return results

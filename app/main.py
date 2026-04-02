@@ -1,5 +1,7 @@
+import json
 import logging
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 
 from cryptography.fernet import Fernet
 from fastapi import Depends, FastAPI, Request
@@ -11,18 +13,43 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.middleware.cors import DynamicCORSMiddleware, sync_origins
 from app.database import async_session, engine, get_session
-from app.middleware.request_id import RequestIdFilter, RequestIdMiddleware
+from app.middleware.log_context import LogContextFilter
+from app.middleware.request_id import RequestIdMiddleware
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)-8s [%(request_id)s] %(name)s  %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
 
-# Inject request_id into every log record
-_request_id_filter = RequestIdFilter()
-for _handler in logging.root.handlers:
-    _handler.addFilter(_request_id_filter)
+class _JSONFormatter(logging.Formatter):
+    """Structured JSON log formatter.
+
+    Merges standard fields (timestamp, level, logger, request_id, message)
+    with any extra fields passed via the ``extra`` dict.
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        entry: dict = {
+            "timestamp": datetime.fromtimestamp(record.created, tz=UTC).isoformat(),
+            "level": record.levelname,
+            "logger": record.name,
+            "request_id": getattr(record, "request_id", "-"),
+            "message": record.getMessage(),
+        }
+        # Merge caller-supplied extra fields (skip internal LogRecord attrs)
+        _BUILTIN = logging.LogRecord("", 0, "", 0, None, None, None).__dict__.keys()
+        for key, val in record.__dict__.items():
+            if key not in _BUILTIN and key not in entry:
+                entry[key] = val
+        if record.exc_info and record.exc_info[1]:
+            entry["exception"] = self.formatException(record.exc_info)
+        return json.dumps(entry, default=str)
+
+
+_handler = logging.StreamHandler()
+_handler.setFormatter(_JSONFormatter())
+_handler.addFilter(LogContextFilter())
+logging.root.addHandler(_handler)
+logging.root.setLevel(logging.INFO)
+# Remove default handlers added before our setup
+for _h in logging.root.handlers[:-1]:
+    logging.root.removeHandler(_h)
 
 logger = logging.getLogger("ragr")
 
@@ -79,7 +106,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
-    logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+    logger.exception("unhandled_exception", extra={"method": request.method, "path": request.url.path})
     return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 app.add_middleware(DynamicCORSMiddleware)

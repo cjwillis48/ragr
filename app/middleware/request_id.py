@@ -2,9 +2,9 @@ import logging
 import re
 import time
 import uuid
-from contextvars import ContextVar
 
-REQUEST_ID_CTX: ContextVar[str] = ContextVar("request_id", default="-")
+from app.middleware.log_context import REQUEST_ID_CTX
+
 _SAFE_ID_RE = re.compile(r"^[a-zA-Z0-9_.\-]{1,128}$")
 
 _access_logger = logging.getLogger("ragr.access")
@@ -55,14 +55,6 @@ class RequestIdMiddleware:
             qs = scope.get("query_string", b"").decode()
             full_path = f"{path}?{qs}" if qs else path
             duration_ms = (time.monotonic() - start) * 1000
-            _access_logger.info(
-                '%s %s %d (%.0fms)', method, full_path, status_code, duration_ms,
-            )
+            _access_logger.info("request", extra={"method": method, "path": full_path, "status": status_code, "duration_ms": round(duration_ms, 1)})
 
 
-class RequestIdFilter(logging.Filter):
-    """Injects request_id from context into every log record."""
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        record.request_id = REQUEST_ID_CTX.get("-")  # type: ignore[attr-defined]
-        return True

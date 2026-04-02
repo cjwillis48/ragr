@@ -41,11 +41,7 @@ def _resolve_client_ip(request: Request) -> str:
         or request.headers.get("x-forwarded-for", "").split(",")[0].strip()
     )
     if not forwarded_ip:
-        logger.warning(
-            "Trusted proxy %s did not set forwarding headers — "
-            "rate limiting will use the proxy IP, affecting all clients behind it",
-            direct_ip,
-        )
+        logger.warning("proxy_missing_forwarding_headers", extra={"proxy_ip": direct_ip})
     return forwarded_ip or direct_ip
 
 
@@ -158,14 +154,14 @@ async def chat(
     try:
         retrieval = await retrieve_with_threshold(session, model, body.question)
     except httpx.TimeoutException:
-        logger.error("Voyage embedding/rerank timed out for model_id=%s", model.id)
+        logger.error("embedding_timeout")
         raise HTTPException(status_code=503, detail="Embedding service timed out. Please try again.")
     except Exception:
-        logger.exception("Embedding/rerank failed for model_id=%s", model.id)
+        logger.exception("embedding_failed")
         raise HTTPException(status_code=503, detail="Embedding service unavailable. Please try again.")
 
     rerank_cost = estimate_rerank_cost(model.rerank_model, retrieval.rerank_tokens) if retrieval.rerank_tokens else 0.0
-    logger.info("pre_stream_ready %.0fms chunks=%d rerank_cost=$%.6f", (time.perf_counter() - t_req) * 1000, len(retrieval.chunks), rerank_cost)
+    logger.info("pre_stream_ready", extra={"duration_ms": round((time.perf_counter() - t_req) * 1000), "chunks": len(retrieval.chunks), "rerank_cost": rerank_cost})
 
     # Build history: prefer server-side session history, fall back to client-provided
     if body.session_id or not body.history:
@@ -239,6 +235,6 @@ async def _stream_response(
             error = json.dumps({"error": f"AI provider error ({e.status_code}). Please try again."})
         yield f"event: error\ndata: {error}\n\n"
     except Exception:
-        logger.exception("Unhandled error in stream for model_id=%s", model.id)
+        logger.exception("stream_error")
         error = json.dumps({"error": "An unexpected error occurred. Please try again."})
         yield f"event: error\ndata: {error}\n\n"

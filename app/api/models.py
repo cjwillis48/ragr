@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +20,7 @@ from app.schemas.models import ChatTheme, RagModelCreate, RagModelPublic, RagMod
 from app.services.budget import check_budget
 
 router = APIRouter(prefix="/models", tags=["models"])
+logger = logging.getLogger("ragr.models")
 
 
 @router.post("", response_model=RagModelRead, status_code=201)
@@ -57,6 +60,7 @@ async def create_model(
     session.add(model)
     await session.commit()
     await session.refresh(model)
+    logger.info("model_created", extra={"slug": model.slug})
     if model.allowed_origins:
         await sync_origins(session)
     return RagModelRead.from_model(model)
@@ -120,6 +124,7 @@ async def update_model(
         setattr(model, field, value)
     await session.commit()
     await session.refresh(model)
+    logger.info("model_updated", extra={"slug": model.slug, "fields": list(update_data.keys())})
     if "allowed_origins" in update_data:
         await sync_origins(session)
     return RagModelRead.from_model(model)
@@ -131,6 +136,7 @@ async def delete_model(
     session: AsyncSession = Depends(get_session),
 ):
     """Soft-delete a RAG model. Data is preserved but hidden from all queries."""
+    logger.info("model_deleted", extra={"slug": model.slug})
     model.deleted_at = func.now()
     await session.commit()
     await sync_origins(session)

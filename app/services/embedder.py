@@ -45,7 +45,7 @@ async def embed_texts(
     total_tokens = 0
     for i in range(0, len(texts), batch_size):
         batch = texts[i : i + batch_size]
-        logger.info("Embedding batch %d/%d (%d chunks)", i // batch_size + 1, -(-len(texts) // batch_size), len(batch))
+        logger.info("embedding_batch", extra={"batch": i // batch_size + 1, "total_batches": -(-len(texts) // batch_size), "chunks": len(batch)})
         result = await client.embed(batch, model=model, input_type="document")
         all_embeddings.extend(result.embeddings)
         total_tokens += result.total_tokens
@@ -58,5 +58,5 @@ async def embed_query(text: str, model: str = "voyage-4-lite", voyage_api_key: s
     client = _get_client(voyage_api_key)
     t0 = time.perf_counter()
     result = await client.embed([text], model=model, input_type="query")
-    logger.info("embed_query %.0fms tokens=%d", (time.perf_counter() - t0) * 1000, result.total_tokens)
+    logger.info("embed_query", extra={"duration_ms": round((time.perf_counter() - t0) * 1000), "tokens": result.total_tokens})
     return result.embeddings[0]

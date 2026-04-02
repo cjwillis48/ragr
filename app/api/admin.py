@@ -386,7 +386,7 @@ async def generate_system_prompt(
                     yield f"data: {json.dumps(text)}\n\n"
             yield "event: done\ndata: {}\n\n"
         except Exception:
-            logger.exception("System prompt generation failed for model_id=%s", model.id)
+            logger.exception("system_prompt_generation_failed")
             yield f"event: error\ndata: {json.dumps({'error': 'Generation failed'})}\n\n"
 
     return StreamingResponse(stream(), media_type="text/event-stream")
@@ -487,6 +487,6 @@ async def generate_sample_questions(
         questions = parsed if isinstance(parsed, list) else parsed.get("questions", [])
         return [q for q in questions if isinstance(q, str)][:3]
     except (json.JSONDecodeError, IndexError, KeyError):
-        logger.warning("Failed to parse sample questions response: %s", raw)
+        logger.warning("sample_questions_parse_failed", extra={"raw_response": raw[:200]})
 
     raise HTTPException(status_code=500, detail="Failed to generate sample questions")

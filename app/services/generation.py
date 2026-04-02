@@ -125,12 +125,11 @@ async def generate_answer(
     )
 
     usage = response.usage
-    logger.info(
-        "generate in=%d out=%d cache_write=%d cache_read=%d",
-        usage.input_tokens, usage.output_tokens,
-        getattr(usage, "cache_creation_input_tokens", 0) or 0,
-        getattr(usage, "cache_read_input_tokens", 0) or 0,
-    )
+    logger.info("generate", extra={
+        "tokens_in": usage.input_tokens, "tokens_out": usage.output_tokens,
+        "cache_write": getattr(usage, "cache_creation_input_tokens", 0) or 0,
+        "cache_read": getattr(usage, "cache_read_input_tokens", 0) or 0,
+    })
 
     raw = response.content[0].text
     answer, status = _parse_meta(raw)
@@ -179,7 +178,7 @@ async def generate_answer_stream(
             async for text in stream.text_stream:
                 if t_first_token is None:
                     t_first_token = time.perf_counter()
-                    logger.info("first_token %.0fms", (t_first_token - t_start) * 1000)
+                    logger.info("first_token", extra={"duration_ms": round((t_first_token - t_start) * 1000)})
                 full_answer += text
                 buffer += text
 
@@ -214,15 +213,15 @@ async def generate_answer_stream(
                 usage = response.usage
                 input_tokens = usage.input_tokens
                 output_tokens = usage.output_tokens
-                logger.info(
-                    "stream_done total=%.0fms in=%d out=%d cache_write=%d cache_read=%d",
-                    (time.perf_counter() - t_start) * 1000, input_tokens, output_tokens,
-                    getattr(usage, "cache_creation_input_tokens", 0) or 0,
-                    getattr(usage, "cache_read_input_tokens", 0) or 0,
-                )
+                logger.info("stream_done", extra={
+                    "duration_ms": round((time.perf_counter() - t_start) * 1000),
+                    "tokens_in": input_tokens, "tokens_out": output_tokens,
+                    "cache_write": getattr(usage, "cache_creation_input_tokens", 0) or 0,
+                    "cache_read": getattr(usage, "cache_read_input_tokens", 0) or 0,
+                })
             except Exception:
-                logger.warning("get_final_message() failed — token counts unavailable")
-                logger.info("stream_done total=%.0fms (no token counts)", (time.perf_counter() - t_start) * 1000)
+                logger.warning("get_final_message_failed")
+                logger.info("stream_done", extra={"duration_ms": round((time.perf_counter() - t_start) * 1000), "tokens_available": False})
     except (anthropic.APIStatusError, anthropic.APIConnectionError, httpx.TimeoutException, httpx.ConnectError, httpx.RemoteProtocolError):
         # Let errors propagate so callers (_stream_response) can send proper SSE error events
         raise

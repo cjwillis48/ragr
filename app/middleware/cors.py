@@ -79,4 +79,4 @@ async def sync_origins(session: AsyncSession) -> None:
 
     global _origins_by_slug
     _origins_by_slug = new_map
-    logger.info("CORS origins synced: %s", {k: v for k, v in new_map.items() if v})
+    logger.info("cors_origins_synced", extra={"origins": {k: v for k, v in new_map.items() if v}})

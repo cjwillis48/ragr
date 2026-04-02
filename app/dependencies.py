@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_session
+from app.middleware.log_context import MODEL_ID_CTX
 from app.models.model_api_key import ModelApiKey
 from app.models.rag_model import RagModel
 
@@ -70,7 +71,7 @@ async def _verify_clerk_token(request: Request) -> ClerkUser | None:
             email=payload.get("email"),
         )
     except Exception:
-        logger.error("Clerk token verification failed", exc_info=True)
+        logger.error("clerk_token_verification_failed", exc_info=True)
         return None
 
 
@@ -112,6 +113,7 @@ async def get_model_by_slug(
     model = result.scalar_one_or_none()
     if model is None:
         raise HTTPException(status_code=404, detail="Model not found")
+    MODEL_ID_CTX.set(model.id)
     return model
 
 
@@ -126,6 +128,7 @@ async def get_active_model_by_slug(
     model = result.scalar_one_or_none()
     if model is None:
         raise HTTPException(status_code=404, detail="Model not found")
+    MODEL_ID_CTX.set(model.id)
     return model
 
 
@@ -169,6 +172,7 @@ async def require_model_auth(
     if clerk_user is not None:
         # Superuser gets read-only access to all models
         if clerk_user.is_superuser and request.method in ("GET", "HEAD", "OPTIONS"):
+            logger.info("superuser_access", extra={"user_id": clerk_user.user_id, "model": model.slug, "method": request.method, "path": request.url.path})
             return model
         # Verify ownership — reject models with no owner outright
         if model.owner_id is None:
