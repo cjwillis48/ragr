@@ -36,3 +36,6 @@ dev = [
 asyncio_mode = "auto"
 testpaths = ["tests"]
 markers = ["slow: marks tests that take >1s"]
+filterwarnings = [
+    "ignore::DeprecationWarning:importlib._bootstrap",  # pymupdf SWIG bindings
+]

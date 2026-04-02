@@ -50,7 +50,7 @@ class DynamicCORSMiddleware:
             await self._app(scope, receive, send)
             return
 
-        from app.config import settings
+        from app.config import settings  # lazy: avoids circular import (cors → main → cors)
 
         path = scope.get("path", "")
         match = _SLUG_RE.match(path)

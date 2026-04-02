@@ -62,7 +62,7 @@ async def _vector_search(
         .limit(limit)
     )
     result = await session.execute(stmt)
-    return [row.tuple() for row in result.all()]
+    return [(chunk, score) for chunk, score in result.all()]
 
 
 async def _keyword_search(
@@ -84,7 +84,7 @@ async def _keyword_search(
         .limit(limit)
     )
     result = await session.execute(stmt)
-    return [row.tuple() for row in result.all()]
+    return [(chunk, score) for chunk, score in result.all()]
 
 
 def _rrf_merge(

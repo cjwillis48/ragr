@@ -1,3 +1,5 @@
+import hashlib
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -41,7 +43,7 @@ class TestIngestContent:
 
     async def test_idempotent_same_hash(self, sample_model):
         """Same content hash → skipped."""
-        import hashlib
+
 
         content = "test content"
         h = f"{content}:chunk_size={sample_model.chunk_size}:chunk_overlap={sample_model.chunk_overlap}"
@@ -103,7 +105,7 @@ class TestIngestContent:
 
     async def test_incomplete_source_marked_complete(self, sample_model):
         """Existing source with status != 'complete' but matching hash gets updated."""
-        import hashlib
+
 
         content = "test"
         h = f"{content}:chunk_size={sample_model.chunk_size}:chunk_overlap={sample_model.chunk_overlap}"

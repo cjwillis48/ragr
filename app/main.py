@@ -44,6 +44,11 @@ async def lifespan(_: FastAPI):
         Fernet(settings.encryption_key.encode())
     except Exception as exc:
         raise RuntimeError(f"ENCRYPTION_KEY is invalid: {exc}") from exc
+    if not settings.console_origins:
+        logger.warning(
+            "CONSOLE_ORIGINS is empty — Clerk JWT authorized_parties check is disabled. "
+            "Set CONSOLE_ORIGINS to your frontend URL(s) in production."
+        )
     logger.info("RAGr starting up")
     async with async_session() as session:
         await sync_origins(session)

@@ -1,4 +1,5 @@
 import pytest
+from cryptography.fernet import InvalidToken
 
 import app.services.crypto as crypto_module
 from app.services.crypto import encrypt, decrypt
@@ -27,7 +28,6 @@ class TestCrypto:
         assert decrypt(ct1) == decrypt(ct2) == "same-value"
 
     def test_decrypt_invalid_token_raises(self):
-        from cryptography.fernet import InvalidToken
 
         with pytest.raises(InvalidToken):
             decrypt("not-valid-ciphertext")

@@ -174,7 +174,7 @@ async def chat(
 
     if body.stream:
         return StreamingResponse(
-            _stream_response(model.id, body.question, retrieval.chunks, history, session_id, rerank_cost, retrieval.scores),
+            _stream_response(model, body.question, retrieval.chunks, history, session_id, rerank_cost, retrieval.scores),
             media_type="text/event-stream",
         )
 
@@ -199,7 +199,7 @@ async def chat(
 
 
 async def _stream_response(
-    model_id: int,
+    model: RagModel,
     question: str,
     chunks: list,
     history: list[dict] | None = None,
@@ -209,15 +209,11 @@ async def _stream_response(
 ):
     """SSE generator. Streams text deltas, then a final done event with metadata.
 
-    Opens its own DB session since the dependency-injected session may close
-    before the stream finishes.
+    Opens its own DB session for logging since the dependency-injected
+    session may close before the stream finishes.
     """
     try:
-        # Load a fresh model reference in our own session
         async with async_session() as stream_session:
-            result = await stream_session.execute(select(RagModel).where(RagModel.id == model_id))
-            model = result.scalar_one()
-
             async for event in generate_answer_stream(model, question, chunks, history=history):
                 if isinstance(event, GenerationResult):
                     await _log_message(stream_session, model, question, event.answer, event.status, event.input_tokens, event.output_tokens, session_id, scores)
@@ -240,6 +236,6 @@ async def _stream_response(
             error = json.dumps({"error": f"AI provider error ({e.status_code}). Please try again."})
         yield f"event: error\ndata: {error}\n\n"
     except Exception:
-        logger.exception("Unhandled error in stream for model_id=%s", model_id)
+        logger.exception("Unhandled error in stream for model_id=%s", model.id)
         error = json.dumps({"error": "An unexpected error occurred. Please try again."})
         yield f"event: error\ndata: {error}\n\n"

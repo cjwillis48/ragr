@@ -25,7 +25,7 @@ _clerk_client = None
 def _get_clerk():
     global _clerk_client
     if _clerk_client is None and settings.clerk_secret_key:
-        from clerk_backend_api import Clerk
+        from clerk_backend_api import Clerk  # lazy: only import SDK when Clerk is configured
         _clerk_client = Clerk(bearer_auth=settings.clerk_secret_key)
     return _clerk_client
 
@@ -54,13 +54,11 @@ async def _verify_clerk_token(request: Request) -> ClerkUser | None:
         return None
 
     try:
-        from clerk_backend_api.security.types import AuthenticateRequestOptions
-        request_state = clerk.authenticate_request(
-            request,
-            AuthenticateRequestOptions(
-                authorized_parties=settings.console_origins,
-            ),
+        from clerk_backend_api.security.types import AuthenticateRequestOptions  # lazy: co-located with Clerk SDK
+        options = AuthenticateRequestOptions(
+            authorized_parties=settings.console_origins or None,
         )
+        request_state = clerk.authenticate_request(request, options)
         if not request_state.is_signed_in:
             return None
 

@@ -16,13 +16,13 @@ class EncryptedString(TypeDecorator):
     def process_bind_param(self, value, dialect):
         if value is None:
             return None
-        from app.services.crypto import encrypt
+        from app.services.crypto import encrypt  # lazy: avoids circular import (models → services → models)
         return encrypt(value)
 
     def process_result_value(self, value, dialect):
         if value is None:
             return None
-        from app.services.crypto import decrypt
+        from app.services.crypto import decrypt  # lazy: avoids circular import (models → services → models)
         return decrypt(value)
 
 
