@@ -93,7 +93,7 @@ async def _validate_model_key(session: AsyncSession, model: RagModel, token: str
     candidate = result.scalar_one_or_none()
     if candidate and await asyncio.to_thread(bcrypt.checkpw, token.encode(), candidate.key_hash.encode()):
         candidate.last_used_at = func.now()
-        await session.flush()
+        await session.commit()
         return True
 
     return False

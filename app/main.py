@@ -12,7 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.middleware.cors import DynamicCORSMiddleware, sync_origins
-from app.database import async_session, engine, get_session
+import app.database as db
+from app.database import _init_engine, get_session
 from app.middleware.log_context import LogContextFilter
 from app.middleware.request_id import RequestIdMiddleware
 
@@ -61,8 +62,7 @@ logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    if not settings.database_url:
-        raise RuntimeError("DATABASE_URL must be set")
+    _init_engine()  # validates DATABASE_URL and creates engine/session factory
     if not settings.clerk_secret_key:
         raise RuntimeError("CLERK_SECRET_KEY must be set")
     if not settings.encryption_key:
@@ -77,11 +77,11 @@ async def lifespan(_: FastAPI):
             "Set CONSOLE_ORIGINS to your frontend URL(s) in production."
         )
     logger.info("RAGr starting up")
-    async with async_session() as session:
+    async with db.async_session() as session:
         await sync_origins(session)
     yield
     logger.info("RAGr shutting down")
-    await engine.dispose()
+    await db.engine.dispose()
 
 
 from app import __version__

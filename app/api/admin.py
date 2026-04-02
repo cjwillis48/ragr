@@ -12,6 +12,7 @@ from sqlalchemy.orm import selectinload
 
 from app.database import get_session
 from app.dependencies import require_model_auth
+from app.services.rate_limit import RateLimiter
 from app.models.content import ContentChunk
 from app.models.conversation import Conversation, Message
 from app.models.ingestion_source import IngestionSource
@@ -24,6 +25,8 @@ from app.services.generation import get_client
 
 router = APIRouter(tags=["admin"])
 logger = logging.getLogger("ragr.admin")
+
+_generation_limiter = RateLimiter(max_requests=10, window_seconds=60)
 
 
 @router.get(
@@ -361,6 +364,8 @@ async def generate_system_prompt(
         session: AsyncSession = Depends(get_session),
 ):
     """Stream-generate a system prompt based on model info and user input."""
+    if not _generation_limiter.is_allowed(f"gen:{model.id}"):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded. Please wait before trying again.")
     if not await check_budget(session, model):
         raise HTTPException(status_code=429, detail="Model has exceeded its monthly budget")
 
@@ -443,6 +448,8 @@ async def generate_sample_questions(
     session: AsyncSession = Depends(get_session),
 ):
     """Generate sample questions based on the model's knowledge base."""
+    if not _generation_limiter.is_allowed(f"gen:{model.id}"):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded. Please wait before trying again.")
     if not await check_budget(session, model):
         raise HTTPException(status_code=429, detail="Model has exceeded its monthly budget")
 

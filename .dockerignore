@@ -27,6 +27,9 @@ ragr.postman_collection.json
 # K8s
 k8s/
 
+# Tests
+tests/
+
 # Scripts (not needed at runtime)
 scripts/
 

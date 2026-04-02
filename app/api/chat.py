@@ -11,7 +11,8 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.database import async_session, get_session
+import app.database as db
+from app.database import get_session
 from app.dependencies import require_chat_auth
 from app.services.rate_limit import RateLimiter
 from app.models.conversation import Conversation, Message
@@ -212,7 +213,7 @@ async def _stream_response(
     session may close before the stream finishes.
     """
     try:
-        async with async_session() as stream_session:
+        async with db.async_session() as stream_session:
             async for event in generate_answer_stream(model, question, chunks, history=history):
                 if isinstance(event, GenerationResult):
                     await _log_message(stream_session, model, question, event.answer, event.status, event.input_tokens, event.output_tokens, session_id, scores)

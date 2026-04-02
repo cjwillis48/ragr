@@ -34,7 +34,8 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.database import async_session, get_session
+import app.database as db
+from app.database import get_session
 from app.dependencies import require_model_auth
 from app.models.content import ContentChunk
 from app.models.ingestion_source import IngestionSource
@@ -57,10 +58,13 @@ from app.schemas.sources import (
 from app.services.html import strip_html
 from app.services.ingest import ingest_content
 from app.services.r2 import is_configured as r2_is_configured
+from app.services.rate_limit import RateLimiter
 from app.services.url_validation import SSRFError, safe_get, validate_url
 
 router = APIRouter(tags=["sources"])
 logger = logging.getLogger("ragr.sources")
+
+_ingest_limiter = RateLimiter(max_requests=20, window_seconds=60)
 
 ALLOWED_EXTENSIONS = {".txt", ".md", ".html", ".htm", ".pdf", ".csv", ".json"}
 
@@ -76,7 +80,7 @@ async def _mark_source_failed(model_id: int, source_identifier: str) -> None:
     state (e.g. after a DB error or rolled-back transaction).
     """
     try:
-        async with async_session() as session:
+        async with db.async_session() as session:
             result = await session.execute(
                 select(IngestionSource).where(
                     IngestionSource.model_id == model_id,
@@ -237,7 +241,7 @@ async def purge_sources(
 
 async def _ingest_url_background(model_id: int, url: str, source_identifier: str) -> None:
     """Fetch a URL server-side, strip HTML, and ingest."""
-    async with _ingest_semaphore, async_session() as session:
+    async with _ingest_semaphore, db.async_session() as session:
         result = await session.execute(select(RagModel).where(RagModel.id == model_id))
         model = result.scalar_one()
 
@@ -293,7 +297,7 @@ async def _ingest_file_background_with_status(
         content_type: str,
 ) -> None:
     """Run file ingestion in the background, updating status on completion."""
-    async with _ingest_semaphore, async_session() as session:
+    async with _ingest_semaphore, db.async_session() as session:
         result = await session.execute(select(RagModel).where(RagModel.id == model_id))
         model = result.scalar_one()
 
@@ -332,6 +336,8 @@ async def create_source(
     - `url` present → async URL fetch + ingest (202), `source_identifier` derived from URL if omitted
     - `urls` present → async batch URL fetch + ingest (202), `source_identifier` derived from each URL
     """
+    if not _ingest_limiter.is_allowed(f"ingest:{model.id}"):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded. Please wait before trying again.")
     has_content = body.content is not None
     has_url = body.url is not None
     has_urls = body.urls is not None and len(body.urls) > 0
@@ -464,6 +470,8 @@ async def upload_source(
         session: AsyncSession = Depends(get_session),
 ):
     """Upload one or more files to ingest. Supports .txt, .md, .html, .pdf files. Returns 202."""
+    if not _ingest_limiter.is_allowed(f"ingest:{model.id}"):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded. Please wait before trying again.")
     import time
 
     from app.config import settings
@@ -667,7 +675,7 @@ async def _ingest_r2_file_background(
             text, content_type = _extract_text(filename, raw)
 
             # Now open a session only for the DB-bound ingestion work.
-            async with async_session() as session:
+            async with db.async_session() as session:
                 result = await session.execute(select(RagModel).where(RagModel.id == model_id))
                 model = result.scalar_one()
 
@@ -713,7 +721,7 @@ async def _crawl_site_background(model_id: int, crawl_request: CrawlRequest) -> 
 
     for page in pages:
         async with _ingest_semaphore:
-            async with async_session() as session:
+            async with db.async_session() as session:
                 result = await session.execute(select(RagModel).where(RagModel.id == model_id))
                 model = result.scalar_one()
 
@@ -742,6 +750,8 @@ async def crawl_site_endpoint(
         model: RagModel = Depends(require_model_auth),
 ):
     """Crawl a website and ingest all discovered pages. Runs in the background."""
+    if not _ingest_limiter.is_allowed(f"ingest:{model.id}"):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded. Please wait before trying again.")
     try:
         await validate_url(body.url)  # validates and returns (url, ips)
     except SSRFError as e:

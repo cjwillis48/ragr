@@ -74,6 +74,13 @@ class _RagModelFields(BaseModel):
     chat_theme: ChatTheme | None = None
     chunk_size: int | None = Field(None, ge=100, le=10000)
     chunk_overlap: int | None = Field(None, ge=0, le=2000)
+
+    @model_validator(mode="after")
+    def overlap_less_than_size(self):
+        if self.chunk_size is not None and self.chunk_overlap is not None:
+            if self.chunk_overlap >= self.chunk_size:
+                raise ValueError("chunk_overlap must be less than chunk_size")
+        return self
     similarity_threshold: float | None = Field(None, ge=0.0, le=1.0)
     top_k: int | None = Field(None, ge=1, le=100)
     embedding_model: str | None = None
