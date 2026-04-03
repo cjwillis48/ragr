@@ -18,6 +18,9 @@ from app.middleware.log_context import LogContextFilter
 from app.middleware.request_id import RequestIdMiddleware
 
 
+_BUILTIN_LOG_ATTRS = logging.LogRecord("", 0, "", 0, None, None, None).__dict__.keys()
+
+
 class _JSONFormatter(logging.Formatter):
     """Structured JSON log formatter.
 
@@ -34,9 +37,8 @@ class _JSONFormatter(logging.Formatter):
             "message": record.getMessage(),
         }
         # Merge caller-supplied extra fields (skip internal LogRecord attrs)
-        _BUILTIN = logging.LogRecord("", 0, "", 0, None, None, None).__dict__.keys()
         for key, val in record.__dict__.items():
-            if key not in _BUILTIN and key not in entry:
+            if key not in _BUILTIN_LOG_ATTRS and key not in entry:
                 entry[key] = val
         if record.exc_info and record.exc_info[1]:
             entry["exception"] = self.formatException(record.exc_info)

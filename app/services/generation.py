@@ -45,7 +45,6 @@ def _build_prompt(
     model: RagModel,
     question: str,
     chunks: list[ContentChunk],
-    total_chunks: int = 0,
     history: list[dict] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """Build system prompt and messages array. Returns (system, messages)."""
@@ -110,11 +109,10 @@ async def generate_answer(
     model: RagModel,
     question: str,
     chunks: list[ContentChunk],
-    total_chunks: int = 0,
     history: list[dict] | None = None,
 ) -> GenerationResult:
     """Generate an answer using retrieved context."""
-    system, messages = _build_prompt(model, question, chunks, total_chunks, history)
+    system, messages = _build_prompt(model, question, chunks, history=history)
 
     client = get_client(model.custom_anthropic_key)
     response = await client.messages.create(
@@ -146,7 +144,6 @@ async def generate_answer_stream(
     model: RagModel,
     question: str,
     chunks: list[ContentChunk],
-    total_chunks: int = 0,
     history: list[dict] | None = None,
 ) -> AsyncGenerator[str | GenerationResult, None]:
     """Stream an answer token by token.
@@ -154,7 +151,7 @@ async def generate_answer_stream(
     Yields str tokens as they arrive. The final yield is a GenerationResult
     for post-stream bookkeeping.
     """
-    system, messages = _build_prompt(model, question, chunks, total_chunks, history)
+    system, messages = _build_prompt(model, question, chunks, history=history)
 
     client = get_client(model.custom_anthropic_key)
     full_answer = ""

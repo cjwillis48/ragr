@@ -28,6 +28,9 @@ class RateLimiter:
             self._requests.pop(key, None)
 
         # Evict stale keys if the dict has grown too large
+        # TODO: under high-cardinality attacks (>max_keys unique IPs per window),
+        # memory can grow faster than eviction cleans. Consider a periodic full
+        # sweep or fixed-memory sliding-window counters if this becomes an issue, or a redis-based solution.
         if len(self._requests) > self._max_keys:
             stale = [k for k, ts in self._requests.items() if not ts or ts[-1] <= cutoff]
             for k in stale:

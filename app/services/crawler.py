@@ -9,7 +9,7 @@ from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
 
 from app.services.html import strip_html
-from app.services.url_validation import safe_get
+from app.services.url_validation import safe_get, validate_url
 
 logger = logging.getLogger("ragr.crawler")
 
@@ -115,6 +115,11 @@ async def crawl_site(
         if depth < max_depth:
             for link in _extract_links(raw_html, url, domain, prefix):
                 if link not in visited:
+                    try:
+                        await validate_url(link)
+                    except ValueError:
+                        logger.debug("crawl_link_rejected", extra={"url": link})
+                        continue
                     visited.add(link)
                     queue.append((link, depth + 1))
 

@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import time
@@ -235,6 +236,9 @@ async def _stream_response(
         else:
             error = json.dumps({"error": f"AI provider error ({e.status_code}). Please try again."})
         yield f"event: error\ndata: {error}\n\n"
+    except asyncio.CancelledError:
+        logger.warning("stream_cancelled", extra={"question": question[:80], "session_id": session_id})
+        raise
     except Exception:
         logger.exception("stream_error")
         error = json.dumps({"error": "An unexpected error occurred. Please try again."})

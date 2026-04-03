@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from pathlib import Path
+import time
 
 import pymupdf  # noqa: F401 — eager import to avoid cold-start delay
 
@@ -92,7 +93,8 @@ async def _mark_source_failed(model_id: int, source_identifier: str) -> None:
                 src.status = "failed"
                 await session.commit()
     except Exception:
-        logger.error("mark_source_failed_error", extra={"model_id": model_id, "source": source_identifier}, exc_info=True)
+        logger.error("mark_source_failed_error", extra={"model_id": model_id, "source": source_identifier},
+                     exc_info=True)
 
 
 @router.get(
@@ -284,7 +286,8 @@ async def _ingest_url_background(model_id: int, url: str, source_identifier: str
                 content_type=ct,
                 source_url=url,
             )
-            logger.info("url_ingested", extra={"model_id": model_id, "url": url, "chunks": ingest_result.chunk_count, "cost": ingest_result.embedding_cost})
+            logger.info("url_ingested", extra={"model_id": model_id, "url": url, "chunks": ingest_result.chunk_count,
+                                               "cost": ingest_result.embedding_cost})
         except Exception:
             logger.exception("url_ingestion_failed", extra={"model_id": model_id, "url": url})
             await _mark_source_failed(model_id, source_identifier)
@@ -313,7 +316,9 @@ async def _ingest_file_background_with_status(
             if ingest_result.skipped:
                 logger.info("file_skipped", extra={"model_id": model_id, "source": source_identifier})
             else:
-                logger.info("file_ingested", extra={"model_id": model_id, "source": source_identifier, "chunks": ingest_result.chunk_count, "cost": ingest_result.embedding_cost})
+                logger.info("file_ingested", extra={"model_id": model_id, "source": source_identifier,
+                                                    "chunks": ingest_result.chunk_count,
+                                                    "cost": ingest_result.embedding_cost})
         except Exception:
             logger.exception("file_ingestion_failed", extra={"model_id": model_id, "source": source_identifier})
             await _mark_source_failed(model_id, source_identifier)
@@ -472,7 +477,6 @@ async def upload_source(
     """Upload one or more files to ingest. Supports .txt, .md, .html, .pdf files. Returns 202."""
     if not _ingest_limiter.is_allowed(f"ingest:{model.id}"):
         raise HTTPException(status_code=429, detail="Rate limit exceeded. Please wait before trying again.")
-    import time
 
     from app.config import settings
 
@@ -547,7 +551,8 @@ async def upload_source(
         ))
 
     await session.commit()
-    logger.info("upload_db_upserts", extra={"duration_ms": round((time.monotonic() - t_db) * 1000, 1), "files": len(prepared_files)})
+    logger.info("upload_db_upserts",
+                extra={"duration_ms": round((time.monotonic() - t_db) * 1000, 1), "files": len(prepared_files)})
 
     for filename, text, content_type in prepared_files:
         _create_background_task(
