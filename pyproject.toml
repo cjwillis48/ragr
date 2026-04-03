@@ -12,8 +12,6 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 
-[project.urls]
-Repository = "https://github.com/cjwillis48/ragr"
 dependencies = [
     "alembic>=1.18.4",
     "bcrypt>=4.0.0",
@@ -34,6 +32,9 @@ dependencies = [
     "boto3>=1.35.0",
     "safehttpx>=0.1.7",
 ]
+
+[project.urls]
+Repository = "https://github.com/cjwillis48/ragr"
 
 [dependency-groups]
 dev = [
