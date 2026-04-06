@@ -46,7 +46,7 @@ def _extract_bearer(authorization: str | None) -> str | None:
     """Extract token from 'Bearer <token>' header. Returns None if missing/malformed."""
     if not authorization or not authorization.startswith("Bearer "):
         return None
-    return authorization.removeprefix("Bearer ")
+    return authorization.removeprefix("Bearer ").strip()
 
 
 async def _verify_clerk_token(request: Request) -> ClerkUser | None:

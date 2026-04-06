@@ -132,7 +132,10 @@ async def top_sources(
         session: AsyncSession = Depends(get_session),
         limit: int = Query(10, ge=1, le=50),
 ):
-    """Top sources by retrieval count. Counts how often each source's chunks appear in retrieved_chunks."""
+    """Top sources by retrieval count. Counts how often each source's chunks appear in retrieved_chunks.
+
+    Uses raw SQL because ORM cannot express CROSS JOIN LATERAL with jsonb_array_elements.
+    """
     result = await session.execute(
         text("""
             SELECT cc.source_identifier,

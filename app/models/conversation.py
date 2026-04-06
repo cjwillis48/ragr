@@ -16,7 +16,7 @@ class Conversation(Base):
     )
     session_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     title: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    message_count: Mapped[int] = mapped_column(Integer, default=0)
+    message_count: Mapped[int] = mapped_column(Integer, default=0)  # monotonic — not decremented on soft-delete
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

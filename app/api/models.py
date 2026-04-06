@@ -30,7 +30,9 @@ async def create_model(
     session: AsyncSession = Depends(get_session),
 ):
     """Create a new RAG model."""
-    existing = await session.execute(select(RagModel).where(RagModel.slug == body.slug))
+    existing = await session.execute(
+        select(RagModel).where(RagModel.slug == body.slug, RagModel.deleted_at.is_(None))
+    )
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Model with this slug already exists")
 

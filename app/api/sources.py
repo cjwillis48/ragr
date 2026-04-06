@@ -104,18 +104,27 @@ async def _mark_source_failed(model_id: int, source_identifier: str) -> None:
 async def list_sources(
         model: RagModel = Depends(require_model_auth),
         session: AsyncSession = Depends(get_session),
+        limit: int = Query(100, ge=1, le=500),
+        offset: int = Query(0, ge=0),
 ):
-    """List all ingested sources for a model."""
+    """List ingested sources for a model with pagination."""
+    count_result = await session.execute(
+        select(func.count()).select_from(IngestionSource).where(IngestionSource.model_id == model.id)
+    )
+    total = count_result.scalar_one()
+
     result = await session.execute(
         select(IngestionSource)
         .where(IngestionSource.model_id == model.id)
         .order_by(IngestionSource.ingested_at.desc())
+        .limit(limit)
+        .offset(offset)
     )
     sources = result.scalars().all()
     return SourceListResponse(
         model_slug=model.slug,
         sources=[SourceResponse.model_validate(s) for s in sources],
-        total=len(sources),
+        total=total,
     )
 
 

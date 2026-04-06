@@ -61,6 +61,7 @@ async def _load_session_history(
             Conversation.session_id == session_id,
             Conversation.deleted_at.is_(None),
             Message.deleted_at.is_(None),
+            Message.status == "answered",
         )
         .order_by(Message.created_at.desc())
         .limit(model.history_turns)
