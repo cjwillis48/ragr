@@ -24,6 +24,11 @@ class ChatTheme(BaseModel):
     border_radius: int | None = Field(None, ge=0, le=50)
     show_sample_questions_in_greeting: bool | None = None
 
+    @field_validator("primary_color", "bg_color", "text_color", "user_bubble_color", "bot_bubble_color", mode="before")
+    @classmethod
+    def strip_color(cls, v: str | None) -> str | None:
+        return v.strip() if isinstance(v, str) else v
+
 
 SUPPORTED_EMBEDDING_MODELS: set[str] = {
     "voyage-4-lite",
@@ -136,6 +141,7 @@ class RagModelPublic(BaseModel):
     chat_theme: ChatTheme | None = None
     hosted_chat: bool
     sample_questions: list[str] = []
+    allowed_origins: list[str] = []
     accepting_requests: bool = True
 
     model_config = {"from_attributes": True}
