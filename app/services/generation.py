@@ -10,7 +10,10 @@ import httpx
 from app.config import settings
 from app.models.content import ContentChunk
 from app.models.rag_model import RagModel
+from app.services.client_cache import ClientCache
 
+_ANTHROPIC_MAX_RETRIES=4
+_ANTHROPIC_TIMEOUT=60.0
 
 @dataclass
 class GenerationResult:
@@ -21,29 +24,29 @@ class GenerationResult:
 
 logger = logging.getLogger("ragr.generation")
 
-_client: anthropic.AsyncAnthropic | None = None
-
 _META_RE = re.compile(r'\s*<meta\s+status="(answered|unanswered|off_topic)"\s*/>\s*$')
 
+_clients = ClientCache(
+    platform_factory=lambda: anthropic.AsyncAnthropic(
+        api_key=settings.anthropic_api_key, max_retries=_ANTHROPIC_MAX_RETRIES, timeout=_ANTHROPIC_TIMEOUT,
+    ),
+    custom_factory=lambda key: anthropic.AsyncAnthropic(
+        api_key=key, max_retries=_ANTHROPIC_MAX_RETRIES, timeout=_ANTHROPIC_TIMEOUT,
+    ),
+)
 
-def _get_client() -> anthropic.AsyncAnthropic:
-    global _client
-    if _client is None:
-        _client = anthropic.AsyncAnthropic(
-            api_key=settings.anthropic_api_key,
-            max_retries=4,
-            timeout=60.0,
-        )
-    return _client
+
+def get_client(api_key: str | None = None) -> anthropic.AsyncAnthropic:
+    """Get an Anthropic client, using a cached custom-key client if provided."""
+    return _clients.get(api_key)
 
 
 def _build_prompt(
     model: RagModel,
     question: str,
     chunks: list[ContentChunk],
-    total_chunks: int = 0,
     history: list[dict] | None = None,
-) -> tuple[str, list[dict]]:
+) -> tuple[list[dict], list[dict]]:
     """Build system prompt and messages array. Returns (system, messages)."""
     def _fmt_chunk(chunk) -> str:
         if chunk.source_url and chunk.source_url.startswith("http"):
@@ -106,27 +109,25 @@ async def generate_answer(
     model: RagModel,
     question: str,
     chunks: list[ContentChunk],
-    total_chunks: int = 0,
     history: list[dict] | None = None,
 ) -> GenerationResult:
     """Generate an answer using retrieved context."""
-    system, messages = _build_prompt(model, question, chunks, total_chunks, history)
+    system, messages = _build_prompt(model, question, chunks, history=history)
 
-    client = _get_client()
+    client = get_client(model.custom_anthropic_key)
     response = await client.messages.create(
         model=model.generation_model,
-        max_tokens=512,
+        max_tokens=model.max_tokens,
         system=system,
         messages=messages,
     )
 
     usage = response.usage
-    logger.info(
-        "generate in=%d out=%d cache_write=%d cache_read=%d",
-        usage.input_tokens, usage.output_tokens,
-        getattr(usage, "cache_creation_input_tokens", 0) or 0,
-        getattr(usage, "cache_read_input_tokens", 0) or 0,
-    )
+    logger.info("generate", extra={
+        "tokens_in": usage.input_tokens, "tokens_out": usage.output_tokens,
+        "cache_write": getattr(usage, "cache_creation_input_tokens", 0) or 0,
+        "cache_read": getattr(usage, "cache_read_input_tokens", 0) or 0,
+    })
 
     raw = response.content[0].text
     answer, status = _parse_meta(raw)
@@ -143,7 +144,6 @@ async def generate_answer_stream(
     model: RagModel,
     question: str,
     chunks: list[ContentChunk],
-    total_chunks: int = 0,
     history: list[dict] | None = None,
 ) -> AsyncGenerator[str | GenerationResult, None]:
     """Stream an answer token by token.
@@ -151,9 +151,9 @@ async def generate_answer_stream(
     Yields str tokens as they arrive. The final yield is a GenerationResult
     for post-stream bookkeeping.
     """
-    system, messages = _build_prompt(model, question, chunks, total_chunks, history)
+    system, messages = _build_prompt(model, question, chunks, history=history)
 
-    client = _get_client()
+    client = get_client(model.custom_anthropic_key)
     full_answer = ""
     input_tokens = 0
     output_tokens = 0
@@ -168,14 +168,14 @@ async def generate_answer_stream(
     try:
         async with client.messages.stream(
             model=model.generation_model,
-            max_tokens=512,
+            max_tokens=model.max_tokens,
             system=system,
             messages=messages,
         ) as stream:
             async for text in stream.text_stream:
                 if t_first_token is None:
                     t_first_token = time.perf_counter()
-                    logger.info("first_token %.0fms", (t_first_token - t_start) * 1000)
+                    logger.info("first_token", extra={"duration_ms": round((t_first_token - t_start) * 1000)})
                 full_answer += text
                 buffer += text
 
@@ -210,29 +210,18 @@ async def generate_answer_stream(
                 usage = response.usage
                 input_tokens = usage.input_tokens
                 output_tokens = usage.output_tokens
-                logger.info(
-                    "stream_done total=%.0fms in=%d out=%d cache_write=%d cache_read=%d",
-                    (time.perf_counter() - t_start) * 1000, input_tokens, output_tokens,
-                    getattr(usage, "cache_creation_input_tokens", 0) or 0,
-                    getattr(usage, "cache_read_input_tokens", 0) or 0,
-                )
+                logger.info("stream_done", extra={
+                    "duration_ms": round((time.perf_counter() - t_start) * 1000),
+                    "tokens_in": input_tokens, "tokens_out": output_tokens,
+                    "cache_write": getattr(usage, "cache_creation_input_tokens", 0) or 0,
+                    "cache_read": getattr(usage, "cache_read_input_tokens", 0) or 0,
+                })
             except Exception:
-                logger.warning("get_final_message() failed — token counts unavailable")
-                logger.info("stream_done total=%.0fms (no token counts)", (time.perf_counter() - t_start) * 1000)
-    except anthropic.APIStatusError as e:
-        logger.warning(
-            "Anthropic API error during stream (status=%s) — yielding result with available data",
-            e.status_code,
-        )
-    except anthropic.APIConnectionError as e:
-        # Covers APITimeoutError (SDK-level timeout) and other connection failures
-        logger.error("Anthropic connection error during stream (%s) — yielding result with available data", type(e).__name__)
-    except httpx.TimeoutException as e:
-        logger.error("Anthropic stream timed out (%s) — yielding result with available data", type(e).__name__)
-    except httpx.ConnectError as e:
-        logger.error("Anthropic connection failed (%s) — yielding result with available data", e)
-    except httpx.RemoteProtocolError as e:
-        logger.error("Anthropic remote protocol error (%s) — yielding result with available data", e)
+                logger.warning("get_final_message_failed")
+                logger.info("stream_done", extra={"duration_ms": round((time.perf_counter() - t_start) * 1000), "tokens_available": False})
+    except (anthropic.APIStatusError, anthropic.APIConnectionError, httpx.TimeoutException, httpx.ConnectError, httpx.RemoteProtocolError):
+        # Let errors propagate so callers (_stream_response) can send proper SSE error events
+        raise
 
     answer, status = _parse_meta(full_answer)
     yield GenerationResult(

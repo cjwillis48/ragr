@@ -1,8 +1,8 @@
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, func
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -23,6 +23,12 @@ class ContentChunk(Base):
     ingested_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+    search_vector = mapped_column(TSVECTOR, nullable=True)
     metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
+
+    __table_args__ = (
+        Index("ix_content_chunks_search_vector", "search_vector", postgresql_using="gin"),
+        Index("ix_content_chunks_model_source", "model_id", "source_identifier"),
+    )
 
     rag_model = relationship("RagModel", back_populates="chunks")

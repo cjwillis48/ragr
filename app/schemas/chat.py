@@ -3,13 +3,13 @@ from pydantic import BaseModel, Field
 
 class ChatMessage(BaseModel):
     role: str = Field(..., pattern="^(user|assistant)$")
-    content: str
+    content: str = Field(..., min_length=1, max_length=8000)
 
 
 class ChatRequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=2000)
     stream: bool = False
-    session_id: str | None = None
+    session_id: str | None = Field(None, max_length=64)
     history: list[ChatMessage] = Field(default_factory=list, max_length=20)
 
 

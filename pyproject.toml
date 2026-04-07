@@ -1,8 +1,17 @@
 [project]
 name = "ragr"
-version = "0.1.0"
+version = "0.3.0"
 description = "Multi-tenant RAG platform"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [{name = "Charlie Willis"}]
 requires-python = ">=3.12"
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+]
+
 dependencies = [
     "alembic>=1.18.4",
     "bcrypt>=4.0.0",
@@ -19,4 +28,26 @@ dependencies = [
     "uvicorn>=0.41.0",
     "voyageai>=0.3.2",
     "clerk-backend-api>=1.0.0",
+    "cryptography>=44.0.0",
+    "boto3>=1.35.0",
+    "safehttpx>=0.1.7",
+]
+
+[project.urls]
+Repository = "https://github.com/cjwillis48/ragr"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=6.0",
+    "time-machine>=2.16",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = ["slow: marks tests that take >1s"]
+filterwarnings = [
+    "ignore::DeprecationWarning:importlib._bootstrap",  # pymupdf SWIG bindings
 ]

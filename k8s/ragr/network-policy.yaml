@@ -1,0 +1,94 @@
+# Default deny ingress to ragr app pods
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ragr-deny-ingress
+  namespace: ragr
+spec:
+  podSelector:
+    matchLabels:
+      app: ragr
+  policyTypes:
+    - Ingress
+---
+# Allow cloudflared to reach ragr API on port 8000
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-cloudflared-to-ragr
+  namespace: ragr
+spec:
+  podSelector:
+    matchLabels:
+      app: ragr
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: cloudflare
+      ports:
+        - protocol: TCP
+          port: 8000
+---
+# Allow ragr to reach postgres
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ragr-egress-to-postgres
+  namespace: ragr
+spec:
+  podSelector:
+    matchLabels:
+      app: ragr
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+# Allow ragr DNS resolution
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ragr-dns
+  namespace: ragr
+spec:
+  podSelector:
+    matchLabels:
+      app: ragr
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+# Allow ragr to reach external APIs (Anthropic, Voyage, Clerk, R2)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ragr-external-https
+  namespace: ragr
+spec:
+  podSelector:
+    matchLabels:
+      app: ragr
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - protocol: TCP
+          port: 443

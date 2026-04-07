@@ -6,7 +6,7 @@ services:
       POSTGRES_PASSWORD: ragr
       POSTGRES_DB: ragr
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -23,7 +23,7 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://ragr:ragr@postgres:5432/ragr
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     depends_on:
       - postgres
 
@@ -32,7 +32,7 @@ services:
     environment:
       PGWEB_DATABASE_URL: postgres://ragr:ragr@postgres:5432/ragr?sslmode=disable
     ports:
-      - "8081:8081"
+      - "127.0.0.1:8081:8081"
     depends_on:
       postgres:
         condition: service_healthy

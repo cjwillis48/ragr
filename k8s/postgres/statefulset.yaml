@@ -14,11 +14,22 @@ spec:
       labels:
         app: postgres
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: postgres
           image: pgvector/pgvector:pg16
           ports:
             - containerPort: 5432
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           env:
             - name: POSTGRES_USER
               valueFrom:
@@ -37,13 +48,27 @@ spec:
           volumeMounts:
             - name: postgres-data
               mountPath: /var/lib/postgresql/data
+          startupProbe:
+            exec:
+              command: ["pg_isready", "-U", "ragr"]
+            failureThreshold: 30
+            periodSeconds: 2
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "ragr"]
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "ragr"]
+            periodSeconds: 10
+            failureThreshold: 3
           resources:
             requests:
-              memory: 48Mi
-              cpu: 25m
-            limits:
-              memory: 128Mi
+              memory: 256Mi
               cpu: 100m
+            limits:
+              memory: 512Mi
+              cpu: 500m
       volumes:
         - name: postgres-data
           persistentVolumeClaim:

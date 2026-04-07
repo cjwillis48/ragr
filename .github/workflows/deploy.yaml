@@ -1,11 +1,69 @@
-name: Build & Deploy
+name: Test & Deploy
 
 on:
   push:
     branches: [main]
+  pull_request:
 
 jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --frozen --dev
+
+      - name: Run unit tests
+        run: uv run pytest tests/unit/ -q --tb=short
+
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: ragr_test
+          POSTGRES_USER: ragr
+          POSTGRES_PASSWORD: ragr
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://ragr:ragr@localhost:5432/ragr_test
+      CLERK_SECRET_KEY: ${{ secrets.CLERK_TEST_SECRET_KEY }}
+      VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
+      ANTHROPIC_API_KEY: test-key
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --frozen --dev
+
+      - name: Run integration tests
+        run: uv run pytest tests/integration/ -q --tb=short
+
   build-and-push:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [unit, integration]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -30,7 +88,7 @@ jobs:
       - name: Compute image tag
         id: vars
         run: |
-          VERSION=$(python3 -c "import re; print(re.search(r'__version__\s*=\s*\"(.+?)\"', open('app/__init__.py').read()).group(1))")
+          VERSION=$(python3 -c "import re; print(re.search(r'^version\s*=\s*\"(.+?)\"', open('pyproject.toml').read(), re.M).group(1))")
           SHORT_SHA=$(echo "${{ github.sha }}" | head -c 7)
           echo "tag=${VERSION}-dev.${SHORT_SHA}" >> "$GITHUB_OUTPUT"
 

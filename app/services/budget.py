@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.rag_model import RagModel
@@ -9,9 +10,9 @@ from app.models.token_usage import TokenUsage
 # Approximate pricing per 1M tokens (USD)
 # These are rough estimates — update as pricing changes
 MODEL_PRICING = {
-    "claude-sonnet-4-5-20250514": {"input": 3.0, "output": 15.0},
-    "claude-haiku-4-5-20251001": {"input": 0.80, "output": 4.0},
     "claude-haiku-4-5": {"input": 0.80, "output": 4.0},
+    "claude-sonnet-4-6": {"input": 3.0, "output": 15.0},
+    "claude-opus-4-6": {"input": 15.0, "output": 75.0},
 }
 DEFAULT_PRICING = {"input": 3.0, "output": 15.0}
 
@@ -72,32 +73,50 @@ async def record_usage(
     input_tokens: int,
     output_tokens: int,
 ) -> TokenUsage:
-    """Record token usage for the current month."""
+    """Record token usage for the current month.
+
+    Uses INSERT ... ON CONFLICT DO UPDATE for atomic increment,
+    avoiding TOCTOU race conditions under concurrent requests.
+    """
     month = datetime.now(timezone.utc).strftime("%Y-%m")
     cost = estimate_cost(model.generation_model, input_tokens, output_tokens)
 
-    usage = await get_current_month_usage(session, model)
-    if usage is None:
-        usage = TokenUsage(
-            model_id=model.id,
-            month=month,
-            total_input_tokens=input_tokens,
-            total_output_tokens=output_tokens,
-            estimated_cost=cost,
-        )
-        session.add(usage)
-    else:
-        usage.total_input_tokens += input_tokens
-        usage.total_output_tokens += output_tokens
-        usage.estimated_cost += cost
-
+    stmt = pg_insert(TokenUsage).values(
+        model_id=model.id,
+        month=month,
+        total_input_tokens=input_tokens,
+        total_output_tokens=output_tokens,
+        estimated_cost=cost,
+    )
+    stmt = stmt.on_conflict_do_update(
+        constraint="uq_model_month",
+        set_={
+            "total_input_tokens": TokenUsage.total_input_tokens + stmt.excluded.total_input_tokens,
+            "total_output_tokens": TokenUsage.total_output_tokens + stmt.excluded.total_output_tokens,
+            "estimated_cost": TokenUsage.estimated_cost + stmt.excluded.estimated_cost,
+        },
+    )
+    await session.execute(stmt)
     await session.flush()
+
+    # Return the updated row
+    usage = await get_current_month_usage(session, model)
     return usage
 
 
+PLATFORM_BUDGET_CAP = 10.0
+
+
 async def check_budget(session: AsyncSession, model: RagModel) -> bool:
-    """Check if a model is within budget. Returns True if OK to proceed."""
+    """Check if a model is within budget. Returns True if OK to proceed.
+
+    Models using platform API keys are hard-capped at $10/month regardless
+    of their configured budget_limit.
+    """
     usage = await get_current_month_usage(session, model)
     if usage is None:
         return True
-    return usage.estimated_cost < model.budget_limit
+    limit = model.budget_limit
+    if not model.custom_anthropic_key:
+        limit = min(limit, PLATFORM_BUDGET_CAP)
+    return usage.estimated_cost < limit

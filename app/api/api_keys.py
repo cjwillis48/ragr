@@ -1,3 +1,5 @@
+import asyncio
+import logging
 import secrets
 
 import bcrypt
@@ -12,6 +14,7 @@ from app.models.rag_model import RagModel
 from app.schemas.api_keys import ApiKeyCreate, ApiKeyCreateResponse, ApiKeyRead
 
 router = APIRouter(tags=["api-keys"])
+logger = logging.getLogger("ragr.api_keys")
 
 KEY_PREFIX = "ragr_"
 
@@ -32,7 +35,7 @@ async def create_api_key(
 ):
     """Generate a new API key for a model. The raw key is only returned once."""
     raw_key = _generate_key()
-    key_hash = bcrypt.hashpw(raw_key.encode(), bcrypt.gensalt()).decode()
+    key_hash = await asyncio.to_thread(lambda: bcrypt.hashpw(raw_key.encode(), bcrypt.gensalt()).decode())
 
     api_key = ModelApiKey(
         model_id=model.id,
@@ -44,6 +47,7 @@ async def create_api_key(
     await session.commit()
     await session.refresh(api_key)
 
+    logger.info("api_key_created", extra={"key_id": api_key.id, "label": body.label})
     return ApiKeyCreateResponse(
         id=api_key.id,
         label=api_key.label,
@@ -92,3 +96,4 @@ async def revoke_api_key(
 
     api_key.is_active = False
     await session.commit()
+    logger.info("api_key_revoked", extra={"key_id": key_id})

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class SourceResponse(BaseModel):
@@ -27,6 +27,7 @@ class ChunkResponse(BaseModel):
     id: int
     content: str
     source_url: str
+    source_identifier: str
     content_type: str
     ingested_at: datetime
 
@@ -39,14 +40,45 @@ class ChunkListResponse(BaseModel):
     total: int
 
 
+def _validate_http_url(url: str) -> str:
+    """Validate that a URL uses http or https scheme."""
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise ValueError(f"Invalid URL '{url}': only http/https URLs are allowed")
+    return url
+
+
 class CreateSourceRequest(BaseModel):
     """Unified source creation request. Provide content, url, or urls."""
     source_identifier: str | None = None
-    content: str | None = Field(default=None, min_length=1)
+    content: str | None = Field(default=None, min_length=1, max_length=500_000)
     url: str | None = None
-    urls: list[str] | None = None
+    urls: list[str] | None = Field(default=None, max_length=200)
     content_type: str = "text"
     source_url: str = ""
+
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, v: str | None) -> str | None:
+        if v is not None:
+            _validate_http_url(v)
+        return v
+
+    @field_validator("urls")
+    @classmethod
+    def validate_urls(cls, v: list[str] | None) -> list[str] | None:
+        if v is not None:
+            for url in v:
+                _validate_http_url(url)
+        return v
+
+    @model_validator(mode="after")
+    def exactly_one_source(self):
+        provided = sum([self.content is not None, self.url is not None, bool(self.urls)])
+        if provided > 1:
+            raise ValueError("Provide only one of 'content', 'url', or 'urls'")
+        return self
 
 
 class CreateSourceResponse(BaseModel):
@@ -55,3 +87,53 @@ class CreateSourceResponse(BaseModel):
     chunks_created: int | None = None
     skipped: bool = False
     message: str
+
+
+class PresignedFileRequest(BaseModel):
+    filename: str = Field(..., min_length=1, max_length=255, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9._\- ]*$")
+    content_type: str = "application/octet-stream"
+
+
+class PresignedUploadRequest(BaseModel):
+    files: list[PresignedFileRequest]
+
+
+class PresignedFileInfo(BaseModel):
+    filename: str
+    object_key: str
+    upload_url: str
+    content_type: str
+
+
+class PresignedUploadResponse(BaseModel):
+    upload_id: str
+    files: list[PresignedFileInfo]
+
+
+class ConfirmFileInfo(BaseModel):
+    filename: str
+    object_key: str
+
+
+class ConfirmUploadRequest(BaseModel):
+    upload_id: str
+    files: list[ConfirmFileInfo]
+
+
+class CrawlRequest(BaseModel):
+    url: str
+    max_pages: int = Field(50, ge=1, le=200)
+    max_depth: int = Field(3, ge=1, le=5)
+    prefix: str | None = None
+    exclude_patterns: list[str] | None = Field(None, description="Glob patterns to exclude (e.g. '*/admin/*', '*.pdf')")
+
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, v: str) -> str:
+        return _validate_http_url(v)
+
+
+class CrawlResponse(BaseModel):
+    status: str
+    message: str
+    pages_queued: int

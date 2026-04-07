@@ -4,6 +4,8 @@ __pycache__/
 *.egg-info/
 .venv/
 .python-version
+.coverage
+htmlcov/
 
 # Environment
 .env
@@ -25,10 +27,13 @@ __pycache__/
 postman/
 ragr.postman_collection.json
 
+# Database backups
+backup.sql
+
 # K8s secrets — plaintext only, sealed files are safe to commit
 k8s/secrets/*-plain.yml
 k8s/secrets/*-plain.yaml
-k8s/secrets/*.sops.yml
+
 
 # Plan files
 DEMO_PLAN.md
