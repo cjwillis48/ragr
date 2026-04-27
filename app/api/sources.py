@@ -270,7 +270,7 @@ async def _ingest_url_background(model_id: int, url: str, source_identifier: str
 
         try:
             max_bytes = settings.max_upload_size_mb * 1024 * 1024
-            resp = await safe_get(url, timeout=30, follow_redirects=True)
+            resp = await safe_get(url, timeout=30)
             resp.raise_for_status()
 
             content_length = int(resp.headers.get("content-length", 0))

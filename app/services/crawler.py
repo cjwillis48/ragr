@@ -87,10 +87,10 @@ async def crawl_site(
             continue
 
         try:
-            resp = await safe_get(url, timeout=30, follow_redirects=True)
+            resp = await safe_get(url, timeout=30)
             resp.raise_for_status()
-        except Exception:
-            logger.warning("crawl_fetch_failed", extra={"url": url})
+        except Exception as e:
+            logger.warning("crawl_fetch_failed", extra={"url": url, "error": str(e)}, exc_info=True)
             continue
 
         # Skip oversized pages (10MB limit per page)
