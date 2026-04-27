@@ -78,9 +78,12 @@ def _build_prompt(
     # Structured block so Anthropic can cache the system prompt across requests.
     system = [{"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}}]
 
+    # Strip internal tags from user input to prevent prompt injection
+    sanitized_question = re.sub(r"</?knowledge[^>]*>|<meta\s[^>]*/?>", "", question)
+
     user_message = (
         f"<knowledge>\n{context}\n</knowledge>\n\n"
-        f"{question}"
+        f"{sanitized_question}"
     )
 
     messages = []
