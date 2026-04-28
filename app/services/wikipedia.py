@@ -16,8 +16,14 @@ _WIKI_PATH_RE = re.compile(r"^/wiki/(.+)$")
 _USER_AGENT = "ragr/1.0 (RAG ingestion bot; https://github.com/cjwillis48/ragr)"
 
 
+_SKIP_NAMESPACES = {"File:", "Category:", "Template:", "Wikipedia:", "Help:", "Talk:", "Special:", "Portal:", "Draft:"}
+
+
 def parse_wikipedia_url(url: str) -> tuple[str, str] | None:
-    """Extract (lang, title) from a Wikipedia URL, or None if not Wikipedia."""
+    """Extract (lang, title) from a Wikipedia article URL, or None if not a Wikipedia article.
+
+    Skips non-article namespaces (File:, Category:, Template:, etc.).
+    """
     parsed = urlparse(url)
     host_match = _WIKIPEDIA_HOST_RE.match(parsed.netloc)
     if not host_match:
@@ -27,6 +33,8 @@ def parse_wikipedia_url(url: str) -> tuple[str, str] | None:
         return None
     lang = host_match.group(1)
     title = unquote(path_match.group(1))
+    if any(title.startswith(ns) for ns in _SKIP_NAMESPACES):
+        return None
     return (lang, title)
 
 
