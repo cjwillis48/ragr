@@ -4,7 +4,7 @@ import asyncio
 import fnmatch
 import logging
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup
@@ -27,12 +27,6 @@ class CrawledPage:
 class FailedPage:
     url: str
     error: str
-
-
-@dataclass
-class CrawlResult:
-    pages: list[CrawledPage] = field(default_factory=list)
-    failed: list[FailedPage] = field(default_factory=list)
 
 
 def _normalize_url(url: str) -> str:
@@ -84,17 +78,19 @@ async def crawl_site(
     max_depth: int = 3,
     prefix: str | None = None,
     exclude_patterns: list[str] | None = None,
-) -> CrawlResult:
+):
     """Crawl a site starting from root_url.
 
-    Returns CrawlResult with successfully crawled pages and failed pages.
+    Async generator — yields CrawledPage or FailedPage as each URL is processed.
+    Only one page of text is held in memory at a time.
     """
     parsed_root = urlparse(root_url)
     domain = parsed_root.netloc
 
     visited: set[str] = set()
     queue: deque[tuple[str, int]] = deque()
-    result = CrawlResult()
+    page_count = 0
+    failed_count = 0
 
     start = _normalize_url(root_url)
     queue.append((start, 0))
@@ -102,7 +98,7 @@ async def crawl_site(
 
     excludes = exclude_patterns or []
 
-    while queue and len(result.pages) < max_pages:
+    while queue and page_count < max_pages:
         url, depth = queue.popleft()
 
         # Check exclude patterns
@@ -114,7 +110,8 @@ async def crawl_site(
             resp.raise_for_status()
         except Exception as e:
             logger.warning("crawl_fetch_failed", extra={"url": url, "error": str(e)}, exc_info=True)
-            result.failed.append(FailedPage(url=url, error=str(e)))
+            failed_count += 1
+            yield FailedPage(url=url, error=str(e))
             continue
 
         # Skip oversized pages (10MB limit per page)
@@ -132,12 +129,13 @@ async def crawl_site(
         if not text or len(text) < 50:
             continue
 
-        result.pages.append(CrawledPage(url=url, text=text, content_type="html"))
-        logger.info("crawled_page", extra={"url": url, "chars": len(text), "depth": depth, "page": len(result.pages), "max_pages": max_pages})
+        page_count += 1
+        logger.info("crawled_page", extra={"url": url, "chars": len(text), "depth": depth, "page": page_count, "max_pages": max_pages})
+        yield CrawledPage(url=url, text=text, content_type="html")
 
         # Discover links if we haven't hit depth limit
         if depth < max_depth:
-            for link in _extract_links(raw_html, url, domain, prefix):
+            for link in await asyncio.to_thread(_extract_links, raw_html, url, domain, prefix):
                 if link not in visited:
                     # Skip SSRF validation for Wikipedia links (known-safe domain)
                     if not is_wikipedia_url(link):
@@ -149,5 +147,4 @@ async def crawl_site(
                     visited.add(link)
                     queue.append((link, depth + 1))
 
-    logger.info("crawl_complete", extra={"pages": len(result.pages), "failed": len(result.failed), "root_url": root_url})
-    return result
+    logger.info("crawl_complete", extra={"pages": page_count, "failed": failed_count, "root_url": root_url})

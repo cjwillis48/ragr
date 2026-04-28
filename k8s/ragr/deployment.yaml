@@ -105,11 +105,14 @@ spec:
               path: /healthz
               port: 8000
             periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
           readinessProbe:
             httpGet:
               path: /readyz
               port: 8000
             periodSeconds: 10
+            timeoutSeconds: 5
           resources:
             requests:
               memory: 256Mi

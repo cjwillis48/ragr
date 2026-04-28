@@ -721,37 +721,95 @@ async def _ingest_r2_file_background(
 
 
 async def _crawl_site_background(model_id: int, crawl_request: CrawlRequest) -> None:
-    """Crawl a site and ingest all discovered pages."""
-    from app.services.crawler import crawl_site
+    """Crawl a site and ingest discovered pages one at a time.
 
+    Uses the crawler's async generator to process pages as they're discovered,
+    keeping only one page of text in memory at a time.
+    """
+    from app.services.crawler import CrawledPage, FailedPage, crawl_site
+
+    page_count = 0
     try:
-        crawl_result = await crawl_site(
+        async for item in crawl_site(
             root_url=crawl_request.url,
             max_pages=crawl_request.max_pages,
             max_depth=crawl_request.max_depth,
             prefix=crawl_request.prefix,
             exclude_patterns=crawl_request.exclude_patterns,
-        )
+        ):
+            if isinstance(item, FailedPage):
+                # Record failed fetch so it's visible in the UI
+                async with db.async_session() as session:
+                    existing = await session.execute(
+                        select(IngestionSource).where(
+                            IngestionSource.model_id == model_id,
+                            IngestionSource.source_identifier == item.url,
+                        )
+                    )
+                    src = existing.scalar_one_or_none()
+                    if src:
+                        src.status = "failed"
+                    else:
+                        session.add(IngestionSource(
+                            model_id=model_id,
+                            source_identifier=item.url,
+                            content_hash="",
+                            chunk_count=0,
+                            source_url=item.url,
+                            content_type="html",
+                            status="failed",
+                        ))
+                    await session.commit()
+                continue
+
+            # CrawledPage — create pending source, then ingest
+            page_count += 1
+            async with db.async_session() as session:
+                existing = await session.execute(
+                    select(IngestionSource).where(
+                        IngestionSource.model_id == model_id,
+                        IngestionSource.source_identifier == item.url,
+                    )
+                )
+                src = existing.scalar_one_or_none()
+                if src:
+                    src.status = "pending"
+                else:
+                    session.add(IngestionSource(
+                        model_id=model_id,
+                        source_identifier=item.url,
+                        content_hash="",
+                        chunk_count=0,
+                        source_url=item.url,
+                        content_type=item.content_type,
+                        status="pending",
+                    ))
+                await session.commit()
+
+            async with _ingest_semaphore:
+                async with db.async_session() as session:
+                    result = await session.execute(select(RagModel).where(RagModel.id == model_id))
+                    model = result.scalar_one()
+
+                    try:
+                        await ingest_content(
+                            session=session,
+                            model=model,
+                            content=item.text,
+                            source_identifier=item.url,
+                            content_type=item.content_type,
+                            source_url=item.url,
+                        )
+                        logger.info("crawl_ingest_complete", extra={"model_id": model_id, "url": item.url})
+                    except Exception:
+                        logger.exception("crawl_ingest_failed", extra={"model_id": model_id, "url": item.url})
+                        await _mark_source_failed(model_id, item.url)
+
     except Exception:
         logger.exception("crawl_failed", extra={"model_id": model_id, "url": crawl_request.url})
-        # Create a failed source so the user sees something in the UI
-        async with db.async_session() as session:
-            session.add(IngestionSource(
-                model_id=model_id,
-                source_identifier=crawl_request.url,
-                content_hash="",
-                chunk_count=0,
-                source_url=crawl_request.url,
-                content_type="html",
-                status="failed",
-            ))
-            await session.commit()
-        return
 
-    # Create pending sources upfront so the UI shows progress during ingestion.
-    # Also flip the root URL from "crawling" to "pending".
+    # Flip root URL from "crawling" to appropriate final status
     async with db.async_session() as session:
-        # Flip root URL status from crawling → pending (or failed if no pages found)
         root_result = await session.execute(
             select(IngestionSource).where(
                 IngestionSource.model_id == model_id,
@@ -761,73 +819,7 @@ async def _crawl_site_background(model_id: int, crawl_request: CrawlRequest) -> 
         )
         root_src = root_result.scalar_one_or_none()
         if root_src:
-            root_src.status = "pending" if crawl_result.pages else "failed"
-
-        for page in crawl_result.pages:
-            if page.url == crawl_request.url:
-                continue  # root URL already handled above
-            existing = await session.execute(
-                select(IngestionSource).where(
-                    IngestionSource.model_id == model_id,
-                    IngestionSource.source_identifier == page.url,
-                )
-            )
-            src = existing.scalar_one_or_none()
-            if src:
-                src.status = "pending"
-            else:
-                session.add(IngestionSource(
-                    model_id=model_id,
-                    source_identifier=page.url,
-                    content_hash="",
-                    chunk_count=0,
-                    source_url=page.url,
-                    content_type=page.content_type,
-                    status="pending",
-                ))
-        await session.commit()
-
-    for page in crawl_result.pages:
-        async with _ingest_semaphore:
-            async with db.async_session() as session:
-                result = await session.execute(select(RagModel).where(RagModel.id == model_id))
-                model = result.scalar_one()
-
-                try:
-                    await ingest_content(
-                        session=session,
-                        model=model,
-                        content=page.text,
-                        source_identifier=page.url,
-                        content_type=page.content_type,
-                        source_url=page.url,
-                    )
-                    logger.info("crawl_ingest_complete", extra={"model_id": model_id, "url": page.url})
-                except Exception:
-                    logger.exception("crawl_ingest_failed", extra={"model_id": model_id, "url": page.url})
-                    await _mark_source_failed(model_id, page.url)
-
-    # Record failed pages so they're visible in the sources UI
-    if crawl_result.failed:
-        async with db.async_session() as session:
-            for fp in crawl_result.failed:
-                existing = await session.execute(
-                    select(IngestionSource).where(
-                        IngestionSource.model_id == model_id,
-                        IngestionSource.source_identifier == fp.url,
-                    )
-                )
-                if existing.scalar_one_or_none():
-                    continue  # don't overwrite a previously successful source
-                session.add(IngestionSource(
-                    model_id=model_id,
-                    source_identifier=fp.url,
-                    content_hash="",
-                    chunk_count=0,
-                    source_url=fp.url,
-                    content_type="html",
-                    status="failed",
-                ))
+            root_src.status = "complete" if page_count > 0 else "failed"
             await session.commit()
 
 

@@ -1,7 +1,18 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from app.services.crawler import _normalize_url, _extract_links, crawl_site
+from app.services.crawler import _normalize_url, _extract_links, crawl_site, CrawledPage, FailedPage
+
+
+async def _collect(gen):
+    """Collect async generator results into (pages, failed) lists."""
+    pages, failed = [], []
+    async for item in gen:
+        if isinstance(item, CrawledPage):
+            pages.append(item)
+        elif isinstance(item, FailedPage):
+            failed.append(item)
+    return pages, failed
 
 
 class TestNormalizeUrl:
@@ -73,12 +84,12 @@ class TestCrawlSite:
 
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr("app.services.crawler.safe_get", mock_get)
-            result = await crawl_site("https://example.com", max_pages=5)
+            pages, failed = await _collect(crawl_site("https://example.com", max_pages=5))
 
-        assert len(result.pages) == 1
-        assert result.pages[0].url == "https://example.com/"
-        assert "Hello world" in result.pages[0].text
-        assert len(result.failed) == 0
+        assert len(pages) == 1
+        assert pages[0].url == "https://example.com/"
+        assert "Hello world" in pages[0].text
+        assert len(failed) == 0
 
     async def test_max_pages_limit(self):
         html = '<html><body><p>Content that is long enough to pass the 50 char minimum threshold for a crawled page.</p><a href="/page2">Next</a></body></html>'
@@ -86,9 +97,9 @@ class TestCrawlSite:
 
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr("app.services.crawler.safe_get", mock_get)
-            result = await crawl_site("https://example.com", max_pages=1)
+            pages, failed = await _collect(crawl_site("https://example.com", max_pages=1))
 
-        assert len(result.pages) == 1
+        assert len(pages) == 1
 
     async def test_skips_non_html(self):
         resp = self._mock_response("binary data", content_type="application/pdf")
@@ -96,9 +107,9 @@ class TestCrawlSite:
 
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr("app.services.crawler.safe_get", mock_get)
-            result = await crawl_site("https://example.com", max_pages=5)
+            pages, failed = await _collect(crawl_site("https://example.com", max_pages=5))
 
-        assert len(result.pages) == 0
+        assert len(pages) == 0
 
     async def test_skips_short_text(self):
         html = "<html><body><p>Short</p></body></html>"  # < 50 chars of text
@@ -106,9 +117,9 @@ class TestCrawlSite:
 
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr("app.services.crawler.safe_get", mock_get)
-            result = await crawl_site("https://example.com")
+            pages, failed = await _collect(crawl_site("https://example.com"))
 
-        assert len(result.pages) == 0
+        assert len(pages) == 0
 
     async def test_skips_oversized_page(self):
         html = '<html><body><p>Content</p></body></html>'
@@ -117,9 +128,9 @@ class TestCrawlSite:
 
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr("app.services.crawler.safe_get", mock_get)
-            result = await crawl_site("https://example.com")
+            pages, failed = await _collect(crawl_site("https://example.com"))
 
-        assert len(result.pages) == 0
+        assert len(pages) == 0
 
     async def test_exclude_patterns(self):
         html = '<html><body><p>Content that is long enough to pass the 50 char minimum threshold for crawling.</p></body></html>'
@@ -127,24 +138,24 @@ class TestCrawlSite:
 
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr("app.services.crawler.safe_get", mock_get)
-            result = await crawl_site(
+            pages, failed = await _collect(crawl_site(
                 "https://example.com/admin/page",
                 exclude_patterns=["*/admin/*"],
-            )
+            ))
 
-        assert len(result.pages) == 0
+        assert len(pages) == 0
 
     async def test_handles_fetch_errors(self):
         mock_get = AsyncMock(side_effect=Exception("connection failed"))
 
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr("app.services.crawler.safe_get", mock_get)
-            result = await crawl_site("https://example.com")
+            pages, failed = await _collect(crawl_site("https://example.com"))
 
-        assert len(result.pages) == 0
-        assert len(result.failed) == 1
-        assert result.failed[0].url == "https://example.com/"
-        assert "connection failed" in result.failed[0].error
+        assert len(pages) == 0
+        assert len(failed) == 1
+        assert failed[0].url == "https://example.com/"
+        assert "connection failed" in failed[0].error
 
     async def test_wikipedia_url_uses_api(self):
         """Wikipedia URLs should route through fetch_wikipedia_html, not safe_get."""
@@ -155,9 +166,9 @@ class TestCrawlSite:
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr("app.services.crawler.fetch_wikipedia_html", mock_wp_fetch)
             mp.setattr("app.services.crawler.safe_get", mock_safe_get)
-            result = await crawl_site("https://en.wikipedia.org/wiki/Hades", max_pages=1)
+            pages, failed = await _collect(crawl_site("https://en.wikipedia.org/wiki/Hades", max_pages=1))
 
-        assert len(result.pages) == 1
-        assert "Hades" in result.pages[0].text
+        assert len(pages) == 1
+        assert "Hades" in pages[0].text
         mock_wp_fetch.assert_called_once_with("en", "Hades", timeout=30)
         mock_safe_get.assert_not_called()
