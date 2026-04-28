@@ -1,5 +1,6 @@
 """Same-domain URL crawler for site-wide ingestion."""
 
+import asyncio
 import fnmatch
 import logging
 from collections import deque
@@ -126,7 +127,7 @@ async def crawl_site(
             continue
 
         raw_html = resp.text
-        text = strip_html(raw_html)
+        text = await asyncio.to_thread(strip_html, raw_html)
 
         if not text or len(text) < 50:
             continue
