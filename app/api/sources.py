@@ -107,16 +107,24 @@ async def list_sources(
         session: AsyncSession = Depends(get_session),
         limit: int = Query(100, ge=1, le=500),
         offset: int = Query(0, ge=0),
+        search: str | None = Query(None, max_length=200, description="Filter sources by identifier or URL"),
 ):
-    """List ingested sources for a model with pagination."""
+    """List ingested sources for a model with pagination and optional search."""
+    base_filter = [IngestionSource.model_id == model.id]
+    if search:
+        pattern = f"%{search}%"
+        base_filter.append(
+            IngestionSource.source_identifier.ilike(pattern) | IngestionSource.source_url.ilike(pattern)
+        )
+
     count_result = await session.execute(
-        select(func.count()).select_from(IngestionSource).where(IngestionSource.model_id == model.id)
+        select(func.count()).select_from(IngestionSource).where(*base_filter)
     )
     total = count_result.scalar_one()
 
     result = await session.execute(
         select(IngestionSource)
-        .where(IngestionSource.model_id == model.id)
+        .where(*base_filter)
         .order_by(IngestionSource.ingested_at.desc())
         .limit(limit)
         .offset(offset)
