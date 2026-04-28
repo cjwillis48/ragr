@@ -61,6 +61,7 @@ from app.services.ingest import ingest_content
 from app.services.r2 import is_configured as r2_is_configured
 from app.services.rate_limit import RateLimiter
 from app.services.url_validation import SSRFError, safe_get, validate_url
+from app.services.wikipedia import is_wikipedia_url
 
 router = APIRouter(tags=["sources"])
 logger = logging.getLogger("ragr.sources")
@@ -270,7 +271,8 @@ async def _ingest_url_background(model_id: int, url: str, source_identifier: str
 
         try:
             max_bytes = settings.max_upload_size_mb * 1024 * 1024
-            resp = await safe_get(url, timeout=30)
+            from app.services.crawler import _fetch_page
+            resp = await _fetch_page(url, timeout=30)
             resp.raise_for_status()
 
             content_length = int(resp.headers.get("content-length", 0))
@@ -379,13 +381,14 @@ async def create_source(
             message="Content unchanged, skipped re-ingestion" if result.skipped else f"Ingested {result.chunk_count} chunks",
         )]
 
-    # Validate URLs before processing
+    # Validate URLs before processing (skip Wikipedia — known-safe, uses API)
     url_list = body.urls if has_urls else [body.url]
     for u in url_list:
-        try:
-            await validate_url(u)  # returns (url, resolved_ips); we just need the validation
-        except SSRFError as e:
-            raise HTTPException(status_code=422, detail=str(e))
+        if not is_wikipedia_url(u):
+            try:
+                await validate_url(u)
+            except SSRFError as e:
+                raise HTTPException(status_code=422, detail=str(e))
 
     # Normalise single url into a list; source_identifier only applies to single url
     urls = url_list
@@ -722,7 +725,7 @@ async def _crawl_site_background(model_id: int, crawl_request: CrawlRequest) -> 
     from app.services.crawler import crawl_site
 
     try:
-        pages = await crawl_site(
+        crawl_result = await crawl_site(
             root_url=crawl_request.url,
             max_pages=crawl_request.max_pages,
             max_depth=crawl_request.max_depth,
@@ -731,9 +734,60 @@ async def _crawl_site_background(model_id: int, crawl_request: CrawlRequest) -> 
         )
     except Exception:
         logger.exception("crawl_failed", extra={"model_id": model_id, "url": crawl_request.url})
+        # Create a failed source so the user sees something in the UI
+        async with db.async_session() as session:
+            session.add(IngestionSource(
+                model_id=model_id,
+                source_identifier=crawl_request.url,
+                content_hash="",
+                chunk_count=0,
+                source_url=crawl_request.url,
+                content_type="html",
+                status="failed",
+            ))
+            await session.commit()
         return
 
-    for page in pages:
+    # Create pending sources upfront so the UI shows progress during ingestion.
+    # Also flip the root URL from "crawling" to "pending".
+    async with db.async_session() as session:
+        # Flip root URL status from crawling → pending (or failed if no pages found)
+        root_result = await session.execute(
+            select(IngestionSource).where(
+                IngestionSource.model_id == model_id,
+                IngestionSource.source_identifier == crawl_request.url,
+                IngestionSource.status == "crawling",
+            )
+        )
+        root_src = root_result.scalar_one_or_none()
+        if root_src:
+            root_src.status = "pending" if crawl_result.pages else "failed"
+
+        for page in crawl_result.pages:
+            if page.url == crawl_request.url:
+                continue  # root URL already handled above
+            existing = await session.execute(
+                select(IngestionSource).where(
+                    IngestionSource.model_id == model_id,
+                    IngestionSource.source_identifier == page.url,
+                )
+            )
+            src = existing.scalar_one_or_none()
+            if src:
+                src.status = "pending"
+            else:
+                session.add(IngestionSource(
+                    model_id=model_id,
+                    source_identifier=page.url,
+                    content_hash="",
+                    chunk_count=0,
+                    source_url=page.url,
+                    content_type=page.content_type,
+                    status="pending",
+                ))
+        await session.commit()
+
+    for page in crawl_result.pages:
         async with _ingest_semaphore:
             async with db.async_session() as session:
                 result = await session.execute(select(RagModel).where(RagModel.id == model_id))
@@ -753,6 +807,29 @@ async def _crawl_site_background(model_id: int, crawl_request: CrawlRequest) -> 
                     logger.exception("crawl_ingest_failed", extra={"model_id": model_id, "url": page.url})
                     await _mark_source_failed(model_id, page.url)
 
+    # Record failed pages so they're visible in the sources UI
+    if crawl_result.failed:
+        async with db.async_session() as session:
+            for fp in crawl_result.failed:
+                existing = await session.execute(
+                    select(IngestionSource).where(
+                        IngestionSource.model_id == model_id,
+                        IngestionSource.source_identifier == fp.url,
+                    )
+                )
+                if existing.scalar_one_or_none():
+                    continue  # don't overwrite a previously successful source
+                session.add(IngestionSource(
+                    model_id=model_id,
+                    source_identifier=fp.url,
+                    content_hash="",
+                    chunk_count=0,
+                    source_url=fp.url,
+                    content_type="html",
+                    status="failed",
+                ))
+            await session.commit()
+
 
 @router.post(
     "/models/{slug}/sources/crawl",
@@ -762,14 +839,38 @@ async def _crawl_site_background(model_id: int, crawl_request: CrawlRequest) -> 
 async def crawl_site_endpoint(
         body: CrawlRequest,
         model: RagModel = Depends(require_model_auth),
+        session: AsyncSession = Depends(get_session),
 ):
     """Crawl a website and ingest all discovered pages. Runs in the background."""
     if not _ingest_limiter.is_allowed(f"ingest:{model.id}"):
         raise HTTPException(status_code=429, detail="Rate limit exceeded. Please wait before trying again.")
-    try:
-        await validate_url(body.url)  # validates and returns (url, ips)
-    except SSRFError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+    if not is_wikipedia_url(body.url):
+        try:
+            await validate_url(body.url)
+        except SSRFError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+
+    # Create a crawling source immediately so the UI shows activity
+    existing = await session.execute(
+        select(IngestionSource).where(
+            IngestionSource.model_id == model.id,
+            IngestionSource.source_identifier == body.url,
+        )
+    )
+    src = existing.scalar_one_or_none()
+    if src:
+        src.status = "crawling"
+    else:
+        session.add(IngestionSource(
+            model_id=model.id,
+            source_identifier=body.url,
+            content_hash="",
+            chunk_count=0,
+            source_url=body.url,
+            content_type="html",
+            status="crawling",
+        ))
+    await session.commit()
 
     _create_background_task(_crawl_site_background(model.id, body))
 

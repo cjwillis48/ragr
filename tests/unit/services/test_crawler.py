@@ -73,11 +73,12 @@ class TestCrawlSite:
 
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr("app.services.crawler.safe_get", mock_get)
-            results = await crawl_site("https://example.com", max_pages=5)
+            result = await crawl_site("https://example.com", max_pages=5)
 
-        assert len(results) == 1
-        assert results[0].url == "https://example.com/"
-        assert "Hello world" in results[0].text
+        assert len(result.pages) == 1
+        assert result.pages[0].url == "https://example.com/"
+        assert "Hello world" in result.pages[0].text
+        assert len(result.failed) == 0
 
     async def test_max_pages_limit(self):
         html = '<html><body><p>Content that is long enough to pass the 50 char minimum threshold for a crawled page.</p><a href="/page2">Next</a></body></html>'
@@ -85,9 +86,9 @@ class TestCrawlSite:
 
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr("app.services.crawler.safe_get", mock_get)
-            results = await crawl_site("https://example.com", max_pages=1)
+            result = await crawl_site("https://example.com", max_pages=1)
 
-        assert len(results) == 1
+        assert len(result.pages) == 1
 
     async def test_skips_non_html(self):
         resp = self._mock_response("binary data", content_type="application/pdf")
@@ -95,9 +96,9 @@ class TestCrawlSite:
 
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr("app.services.crawler.safe_get", mock_get)
-            results = await crawl_site("https://example.com", max_pages=5)
+            result = await crawl_site("https://example.com", max_pages=5)
 
-        assert len(results) == 0
+        assert len(result.pages) == 0
 
     async def test_skips_short_text(self):
         html = "<html><body><p>Short</p></body></html>"  # < 50 chars of text
@@ -105,9 +106,9 @@ class TestCrawlSite:
 
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr("app.services.crawler.safe_get", mock_get)
-            results = await crawl_site("https://example.com")
+            result = await crawl_site("https://example.com")
 
-        assert len(results) == 0
+        assert len(result.pages) == 0
 
     async def test_skips_oversized_page(self):
         html = '<html><body><p>Content</p></body></html>'
@@ -116,9 +117,9 @@ class TestCrawlSite:
 
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr("app.services.crawler.safe_get", mock_get)
-            results = await crawl_site("https://example.com")
+            result = await crawl_site("https://example.com")
 
-        assert len(results) == 0
+        assert len(result.pages) == 0
 
     async def test_exclude_patterns(self):
         html = '<html><body><p>Content that is long enough to pass the 50 char minimum threshold for crawling.</p></body></html>'
@@ -126,18 +127,37 @@ class TestCrawlSite:
 
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr("app.services.crawler.safe_get", mock_get)
-            results = await crawl_site(
+            result = await crawl_site(
                 "https://example.com/admin/page",
                 exclude_patterns=["*/admin/*"],
             )
 
-        assert len(results) == 0
+        assert len(result.pages) == 0
 
     async def test_handles_fetch_errors(self):
         mock_get = AsyncMock(side_effect=Exception("connection failed"))
 
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr("app.services.crawler.safe_get", mock_get)
-            results = await crawl_site("https://example.com")
+            result = await crawl_site("https://example.com")
 
-        assert len(results) == 0
+        assert len(result.pages) == 0
+        assert len(result.failed) == 1
+        assert result.failed[0].url == "https://example.com/"
+        assert "connection failed" in result.failed[0].error
+
+    async def test_wikipedia_url_uses_api(self):
+        """Wikipedia URLs should route through fetch_wikipedia_html, not safe_get."""
+        html = '<html><body><p>Hades is the god of the underworld in Greek mythology. He is the eldest son of Cronus.</p></body></html>'
+        mock_wp_fetch = AsyncMock(return_value=self._mock_response(html))
+        mock_safe_get = AsyncMock()
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr("app.services.crawler.fetch_wikipedia_html", mock_wp_fetch)
+            mp.setattr("app.services.crawler.safe_get", mock_safe_get)
+            result = await crawl_site("https://en.wikipedia.org/wiki/Hades", max_pages=1)
+
+        assert len(result.pages) == 1
+        assert "Hades" in result.pages[0].text
+        mock_wp_fetch.assert_called_once_with("en", "Hades", timeout=30)
+        mock_safe_get.assert_not_called()
