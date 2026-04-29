@@ -87,11 +87,11 @@ spec:
                   name: ragr-secrets
                   key: R2_SECRET_ACCESS_KEY
             - name: WORKER_CONCURRENCY
-              value: "3"
+              value: "5"
           resources:
             requests:
               memory: 256Mi
-              cpu: 50m
+              cpu: 100m
             limits:
               memory: 2Gi
-              cpu: 500m
+              cpu: "1"
