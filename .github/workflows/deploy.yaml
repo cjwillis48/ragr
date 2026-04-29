@@ -24,6 +24,16 @@ jobs:
       - name: Run unit tests
         run: uv run pytest tests/unit/ -q --tb=short
 
+      - name: Check version bump
+        if: github.event_name == 'pull_request'
+        run: |
+          PR_VERSION=$(python3 -c "import re; print(re.search(r'^version\s*=\s*\"(.+?)\"', open('pyproject.toml').read(), re.M).group(1))")
+          MAIN_VERSION=$(git fetch origin main --quiet && git show origin/main:pyproject.toml | python3 -c "import re,sys; print(re.search(r'^version\s*=\s*\"(.+?)\"', sys.stdin.read(), re.M).group(1))")
+          if [ "$PR_VERSION" = "$MAIN_VERSION" ]; then
+            echo "::error::Version in pyproject.toml ($PR_VERSION) has not been bumped from main. Update the version before merging."
+            exit 1
+          fi
+
   integration:
     runs-on: ubuntu-latest
     services:
