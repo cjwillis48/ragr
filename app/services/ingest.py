@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import time
 from dataclasses import dataclass
 from functools import partial
 
@@ -20,6 +21,9 @@ class IngestResult:
     chunk_count: int
     skipped: bool
     embedding_cost: float
+    chunk_ms: int = 0
+    embed_ms: int = 0
+    db_ms: int = 0
 
 
 async def ingest_content(
@@ -67,16 +71,21 @@ async def ingest_content(
             )
 
         # Chunk the content (run in thread to avoid blocking the event loop)
+        t_chunk = time.perf_counter()
         chunks = await asyncio.get_running_loop().run_in_executor(
             None, partial(chunk_text, content, model.chunk_size, model.chunk_overlap)
         )
+        chunk_ms = round((time.perf_counter() - t_chunk) * 1000)
         if not chunks:
-            return IngestResult(chunk_count=0, skipped=False, embedding_cost=0.0)
+            return IngestResult(chunk_count=0, skipped=False, embedding_cost=0.0, chunk_ms=chunk_ms)
 
         # Embed all chunks
+        t_embed = time.perf_counter()
         embed = await embed_texts(chunks, model=model.embedding_model, voyage_api_key=model.custom_voyage_key)
+        embed_ms = round((time.perf_counter() - t_embed) * 1000)
 
         # Store chunks
+        t_db = time.perf_counter()
         for chunk_text_str, embedding in zip(chunks, embed.embeddings):
             chunk = ContentChunk(
                 model_id=model.id,
@@ -117,8 +126,12 @@ async def ingest_content(
         )
         await session.execute(stmt)
         await session.commit()
+        db_ms = round((time.perf_counter() - t_db) * 1000)
     except Exception:
         await session.rollback()
         raise
 
-    return IngestResult(chunk_count=len(chunks), skipped=False, embedding_cost=embedding_cost)
+    return IngestResult(
+        chunk_count=len(chunks), skipped=False, embedding_cost=embedding_cost,
+        chunk_ms=chunk_ms, embed_ms=embed_ms, db_ms=db_ms,
+    )

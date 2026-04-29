@@ -164,7 +164,11 @@ async def handle_url_job(job: IngestionJob) -> None:
             session=session, model=model, content=text,
             source_identifier=source_identifier, content_type=ct, source_url=url,
         )
-        logger.info("url_ingested", extra={"model_id": model_id, "url": url, "chunks": ingest_result.chunk_count, "cost": ingest_result.embedding_cost})
+        logger.info("url_ingested", extra={
+            "model_id": model_id, "url": url,
+            "chunks": ingest_result.chunk_count, "cost": ingest_result.embedding_cost,
+            "chunk_ms": ingest_result.chunk_ms, "embed_ms": ingest_result.embed_ms, "db_ms": ingest_result.db_ms,
+        })
 
 
 async def handle_file_job(job: IngestionJob) -> None:
@@ -196,7 +200,11 @@ async def handle_file_job(job: IngestionJob) -> None:
         if ingest_result.skipped:
             logger.info("file_skipped", extra={"model_id": model_id, "source": source_identifier})
         else:
-            logger.info("file_ingested", extra={"model_id": model_id, "source": source_identifier, "chunks": ingest_result.chunk_count, "cost": ingest_result.embedding_cost})
+            logger.info("file_ingested", extra={
+                "model_id": model_id, "source": source_identifier,
+                "chunks": ingest_result.chunk_count, "cost": ingest_result.embedding_cost,
+                "chunk_ms": ingest_result.chunk_ms, "embed_ms": ingest_result.embed_ms, "db_ms": ingest_result.db_ms,
+            })
 
 
 async def handle_r2_file_job(job: IngestionJob) -> None:
