@@ -112,8 +112,14 @@ async def crawl_site(
         if not batch:
             break
 
-        # Fetch all pages in the batch concurrently
+        # Fetch, parse, and extract links concurrently per batch
         import time as _time
+
+        def _process_html(raw_html: str, url: str):
+            """CPU-bound: strip HTML and extract links in one thread call."""
+            text = strip_html(raw_html)
+            links = _extract_links(raw_html, url, domain, prefix)
+            return text, links
 
         async def _process_url(url: str, depth: int):
             t_fetch = _time.perf_counter()
@@ -135,13 +141,13 @@ async def crawl_site(
 
             t_parse = _time.perf_counter()
             raw_html = resp.text
-            text = await asyncio.to_thread(strip_html, raw_html)
+            text, links = await asyncio.to_thread(_process_html, raw_html, url)
             parse_ms = round((_time.perf_counter() - t_parse) * 1000)
 
             if not text or len(text) < 50:
                 return None
 
-            return (CrawledPage(url=url, text=text, content_type="html"), raw_html, depth, fetch_ms, parse_ms)
+            return (CrawledPage(url=url, text=text, content_type="html"), links, depth, fetch_ms, parse_ms)
 
         t_batch = _time.perf_counter()
         results = await asyncio.gather(*[_process_url(url, depth) for url, depth in batch])
@@ -156,14 +162,14 @@ async def crawl_site(
                 yield result
                 continue
 
-            page, raw_html, depth, fetch_ms, parse_ms = result
+            page, links, depth, fetch_ms, parse_ms = result
             page_count += 1
 
-            # Extract links and measure time
+            # Add discovered links to queue
             t_links = _time.perf_counter()
             new_links = 0
             if depth < max_depth:
-                for link in await asyncio.to_thread(_extract_links, raw_html, page.url, domain, prefix):
+                for link in links:
                     if link not in visited:
                         if is_wikipedia_domain(link) and not is_wikipedia_url(link):
                             continue
