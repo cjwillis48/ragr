@@ -23,7 +23,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: worker
-          image: ghcr.io/cjwillis48/ragr:0.3.0-dev.d0084bc
+          image: ghcr.io/cjwillis48/ragr:0.3.0-pr4.1d916d7
           command: ["python", "-m", "app.worker"]
           securityContext:
             allowPrivilegeEscalation: false
