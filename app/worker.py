@@ -310,7 +310,7 @@ async def handle_crawl_job(job: IngestionJob) -> None:
             session.add(IngestionJob(
                 model_id=model_id,
                 job_type="file",
-                job_params={"source_identifier": item.url, "content_type": item.content_type},
+                job_params={"source_identifier": item.url, "content_type": item.content_type, "parent_job_id": job.id},
             ))
             await session.commit()
 
@@ -349,12 +349,17 @@ async def process_job(job: IngestionJob) -> None:
         await mark_failed(job.id, f"Unknown job type: {job.job_type}", job.max_attempts, job.max_attempts)
         return
 
+    parent_job_id = job.job_params.get("parent_job_id")
+    job_extra = {"job_id": job.id, "job_type": job.job_type, "model_id": job.model_id}
+    if parent_job_id:
+        job_extra["parent_job_id"] = parent_job_id
+
     try:
         await handler(job)
         await mark_complete(job.id)
-        logger.info("job_complete", extra={"job_id": job.id, "job_type": job.job_type, "model_id": job.model_id})
+        logger.info("job_complete", extra=job_extra)
     except Exception as e:
-        logger.exception("job_failed", extra={"job_id": job.id, "job_type": job.job_type, "model_id": job.model_id})
+        logger.exception("job_failed", extra=job_extra)
         await mark_failed(job.id, str(e), job.attempts, job.max_attempts)
         # Mark the source as failed if all retries are exhausted
         if job.attempts >= job.max_attempts:
