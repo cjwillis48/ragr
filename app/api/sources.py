@@ -66,7 +66,9 @@ async def list_sources(
     if search:
         pattern = f"%{search}%"
         base_filter.append(
-            IngestionSource.source_identifier.ilike(pattern) | IngestionSource.source_url.ilike(pattern)
+            IngestionSource.source_identifier.ilike(pattern)
+            | IngestionSource.source_url.ilike(pattern)
+            | IngestionSource.raw_content.ilike(pattern)
         )
 
     count_result = await session.execute(
