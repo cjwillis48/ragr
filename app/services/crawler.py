@@ -11,7 +11,7 @@ from bs4 import BeautifulSoup
 
 from app.services.html import strip_html
 from app.services.url_validation import safe_get, validate_url
-from app.services.wikipedia import fetch_wikipedia_html, is_wikipedia_url, parse_wikipedia_url
+from app.services.wikipedia import fetch_wikipedia_html, is_wikipedia_domain, is_wikipedia_url, parse_wikipedia_url
 
 logger = logging.getLogger("ragr.crawler")
 
@@ -137,6 +137,9 @@ async def crawl_site(
         if depth < max_depth:
             for link in await asyncio.to_thread(_extract_links, raw_html, url, domain, prefix):
                 if link not in visited:
+                    # Skip non-article Wikipedia pages (File:, Category:, etc.)
+                    if is_wikipedia_domain(link) and not is_wikipedia_url(link):
+                        continue
                     # Skip SSRF validation for Wikipedia links (known-safe domain)
                     if not is_wikipedia_url(link):
                         try:

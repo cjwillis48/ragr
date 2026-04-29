@@ -39,7 +39,14 @@ def parse_wikipedia_url(url: str) -> tuple[str, str] | None:
 
 
 def is_wikipedia_url(url: str) -> bool:
+    """True if URL is a crawlable Wikipedia article (not File:, Category:, etc.)."""
     return parse_wikipedia_url(url) is not None
+
+
+def is_wikipedia_domain(url: str) -> bool:
+    """True if URL is on *.wikipedia.org, regardless of namespace."""
+    parsed = urlparse(url)
+    return bool(_WIKIPEDIA_HOST_RE.match(parsed.netloc))
 
 
 async def fetch_wikipedia_html(lang: str, title: str, timeout: float = 30) -> httpx.Response:
