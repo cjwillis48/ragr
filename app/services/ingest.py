@@ -4,7 +4,7 @@ import time
 from dataclasses import dataclass
 from functools import partial
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -61,6 +61,10 @@ async def ingest_content(
         return IngestResult(chunk_count=existing.chunk_count, skipped=True, embedding_cost=0.0)
 
     try:
+        # Skip fsync wait on commit — ingested content is re-derivable from raw_content,
+        # so durability of individual chunk inserts isn't critical. Big speedup on disk-bound writes.
+        await session.execute(text("SET LOCAL synchronous_commit = OFF"))
+
         # If source exists but hash changed, delete old chunks
         if existing:
             await session.execute(
@@ -84,19 +88,21 @@ async def ingest_content(
         embed = await embed_texts(chunks, model=model.embedding_model, voyage_api_key=model.custom_voyage_key)
         embed_ms = round((time.perf_counter() - t_embed) * 1000)
 
-        # Store chunks
+        # Store chunks (single multi-row INSERT instead of per-row session.add())
         t_db = time.perf_counter()
-        for chunk_text_str, embedding in zip(chunks, embed.embeddings):
-            chunk = ContentChunk(
-                model_id=model.id,
-                content=chunk_text_str,
-                embedding=embedding,
-                search_vector=func.to_tsvector("english", chunk_text_str),
-                source_url=source_url,
-                source_identifier=source_identifier,
-                content_type=content_type,
-            )
-            session.add(chunk)
+        chunk_rows = [
+            {
+                "model_id": model.id,
+                "content": chunk_text_str,
+                "embedding": embedding,
+                "search_vector": func.to_tsvector("english", chunk_text_str),
+                "source_url": source_url,
+                "source_identifier": source_identifier,
+                "content_type": content_type,
+            }
+            for chunk_text_str, embedding in zip(chunks, embed.embeddings)
+        ]
+        await session.execute(pg_insert(ContentChunk).values(chunk_rows))
 
         # Upsert ingestion source (handles race with pending row from upload endpoint)
         embedding_cost = estimate_embedding_cost(model.embedding_model, embed.total_tokens)
