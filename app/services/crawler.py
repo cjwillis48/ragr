@@ -98,56 +98,74 @@ async def crawl_site(
 
     excludes = exclude_patterns or []
 
+    fetch_batch_size = 5
+
     while queue and page_count < max_pages:
-        url, depth = queue.popleft()
+        # Pop a batch of URLs from the queue
+        batch = []
+        while queue and len(batch) < fetch_batch_size and page_count + len(batch) < max_pages:
+            url, depth = queue.popleft()
+            if any(fnmatch.fnmatch(url, pattern) for pattern in excludes):
+                continue
+            batch.append((url, depth))
 
-        # Check exclude patterns
-        if any(fnmatch.fnmatch(url, pattern) for pattern in excludes):
-            continue
+        if not batch:
+            break
 
-        try:
-            resp = await _fetch_page(url, timeout=30)
-            resp.raise_for_status()
-        except Exception as e:
-            logger.warning("crawl_fetch_failed", extra={"url": url, "error": str(e)}, exc_info=True)
-            failed_count += 1
-            yield FailedPage(url=url, error=str(e))
-            continue
+        # Fetch all pages in the batch concurrently
+        async def _process_url(url: str, depth: int):
+            try:
+                resp = await _fetch_page(url, timeout=30)
+                resp.raise_for_status()
+            except Exception as e:
+                logger.warning("crawl_fetch_failed", extra={"url": url, "error": str(e)}, exc_info=True)
+                return FailedPage(url=url, error=str(e))
 
-        # Skip oversized pages (10MB limit per page)
-        if len(resp.content) > 10 * 1024 * 1024:
-            logger.warning("crawl_page_oversized", extra={"url": url, "bytes": len(resp.content)})
-            continue
+            if len(resp.content) > 10 * 1024 * 1024:
+                logger.warning("crawl_page_oversized", extra={"url": url, "bytes": len(resp.content)})
+                return None
 
-        content_type_header = resp.headers.get("content-type", "")
-        if "html" not in content_type_header:
-            continue
+            content_type_header = resp.headers.get("content-type", "")
+            if "html" not in content_type_header:
+                return None
 
-        raw_html = resp.text
-        text = await asyncio.to_thread(strip_html, raw_html)
+            raw_html = resp.text
+            text = await asyncio.to_thread(strip_html, raw_html)
 
-        if not text or len(text) < 50:
-            continue
+            if not text or len(text) < 50:
+                return None
 
-        page_count += 1
-        logger.info("crawled_page", extra={"url": url, "chars": len(text), "depth": depth, "page": page_count, "max_pages": max_pages})
-        yield CrawledPage(url=url, text=text, content_type="html")
+            # Return page + raw HTML for link extraction
+            return (CrawledPage(url=url, text=text, content_type="html"), raw_html, depth)
 
-        # Discover links if we haven't hit depth limit
-        if depth < max_depth:
-            for link in await asyncio.to_thread(_extract_links, raw_html, url, domain, prefix):
-                if link not in visited:
-                    # Skip non-article Wikipedia pages (File:, Category:, etc.)
-                    if is_wikipedia_domain(link) and not is_wikipedia_url(link):
-                        continue
-                    # Skip SSRF validation for Wikipedia links (known-safe domain)
-                    if not is_wikipedia_url(link):
-                        try:
-                            await validate_url(link)
-                        except ValueError:
-                            logger.debug("crawl_link_rejected", extra={"url": link})
+        results = await asyncio.gather(*[_process_url(url, depth) for url, depth in batch])
+
+        for result in results:
+            if result is None:
+                continue
+            if isinstance(result, FailedPage):
+                failed_count += 1
+                yield result
+                continue
+
+            page, raw_html, depth = result
+            page_count += 1
+            logger.info("crawled_page", extra={"url": page.url, "chars": len(page.text), "depth": depth, "page": page_count, "max_pages": max_pages})
+            yield page
+
+            # Discover links if we haven't hit depth limit
+            if depth < max_depth:
+                for link in await asyncio.to_thread(_extract_links, raw_html, page.url, domain, prefix):
+                    if link not in visited:
+                        if is_wikipedia_domain(link) and not is_wikipedia_url(link):
                             continue
-                    visited.add(link)
-                    queue.append((link, depth + 1))
+                        if not is_wikipedia_url(link):
+                            try:
+                                await validate_url(link)
+                            except ValueError:
+                                logger.debug("crawl_link_rejected", extra={"url": link})
+                                continue
+                        visited.add(link)
+                        queue.append((link, depth + 1))
 
     logger.info("crawl_complete", extra={"pages": page_count, "failed": failed_count, "root_url": root_url})
