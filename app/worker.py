@@ -22,6 +22,7 @@ from app.models.rag_model import RagModel
 from app.services.html import strip_html
 from app.logging_setup import configure_logging
 from app.services.ingest import ingest_content
+import app.services.wikipedia as wikipedia_module
 
 configure_logging()
 logger = logging.getLogger("ragr.worker")
@@ -429,6 +430,10 @@ async def main() -> None:
     if active_tasks:
         logger.info("worker_draining", extra={"tasks": len(active_tasks)})
         await asyncio.wait(active_tasks, timeout=300)
+
+    # Close shared HTTP clients
+    if wikipedia_module._wikipedia_client and not wikipedia_module._wikipedia_client.is_closed:
+        await wikipedia_module._wikipedia_client.aclose()
 
     logger.info("worker_stopped")
 

@@ -49,13 +49,23 @@ def is_wikipedia_domain(url: str) -> bool:
     return bool(_WIKIPEDIA_HOST_RE.match(parsed.netloc))
 
 
+_wikipedia_client: httpx.AsyncClient | None = None
+
+
+def _get_wikipedia_client() -> httpx.AsyncClient:
+    """Reuse a single HTTP client for Wikipedia requests (connection pooling + TLS reuse)."""
+    global _wikipedia_client
+    if _wikipedia_client is None or _wikipedia_client.is_closed:
+        _wikipedia_client = httpx.AsyncClient(
+            headers={"User-Agent": _USER_AGENT},
+            follow_redirects=True,
+            timeout=30,
+        )
+    return _wikipedia_client
+
+
 async def fetch_wikipedia_html(lang: str, title: str, timeout: float = 30) -> httpx.Response:
     """Fetch article HTML from the Wikipedia REST API."""
     api_url = f"https://{lang}.wikipedia.org/api/rest_v1/page/html/{title}"
-    async with httpx.AsyncClient() as client:
-        return await client.get(
-            api_url,
-            headers={"User-Agent": _USER_AGENT},
-            timeout=timeout,
-            follow_redirects=True,
-        )
+    client = _get_wikipedia_client()
+    return await client.get(api_url, timeout=timeout)
