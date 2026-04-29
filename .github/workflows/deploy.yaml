@@ -66,10 +66,14 @@ jobs:
     needs: [unit, integration]
     runs-on: ubuntu-latest
     permissions:
+      contents: write
       packages: write
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -84,15 +88,36 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Compute image tag
+        id: vars
+        run: |
+          VERSION=$(python3 -c "import re; print(re.search(r'^version\s*=\s*\"(.+?)\"', open('pyproject.toml').read(), re.M).group(1))")
+          SHORT_SHA=$(echo "${{ github.event.pull_request.head.sha }}" | head -c 7)
+          echo "tag=${VERSION}-pr${{ github.event.pull_request.number }}.${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+
       - name: Build and push PR image
         uses: docker/build-push-action@v6
         with:
           context: .
           platforms: linux/arm64
           push: true
-          tags: ghcr.io/cjwillis48/ragr:pr-${{ github.event.pull_request.number }}
+          tags: ghcr.io/cjwillis48/ragr:${{ steps.vars.outputs.tag }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Update deployment image tags
+        run: |
+          IMAGE="ghcr.io/cjwillis48/ragr:${{ steps.vars.outputs.tag }}"
+          sed -i "s|image: ghcr.io/cjwillis48/ragr:.*|image: ${IMAGE}|g" k8s/ragr/deployment.yaml
+          sed -i "s|image: ghcr.io/cjwillis48/ragr:.*|image: ${IMAGE}|g" k8s/ragr-worker/deployment.yaml
+
+      - name: Commit updated manifest
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add k8s/ragr/deployment.yaml k8s/ragr-worker/deployment.yaml
+          git diff --staged --quiet || git commit -m "deploy: ragr ${{ steps.vars.outputs.tag }} [skip ci]"
+          git push
 
   build-and-push:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
