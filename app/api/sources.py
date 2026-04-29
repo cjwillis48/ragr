@@ -1,44 +1,18 @@
-import asyncio
 import logging
 from pathlib import Path
 import time
 
 import pymupdf  # noqa: F401 — eager import to avoid cold-start delay
 
-# Limit concurrent background ingestion tasks to avoid exhausting the DB
-# connection pool (default QueuePool size=5, overflow=10).
-_ingest_semaphore = asyncio.Semaphore(3)
-
-# Track background tasks to prevent silent GC and log unhandled exceptions
-_background_tasks: set[asyncio.Task] = set()
-
-
-def _create_background_task(coro, *, name: str | None = None) -> asyncio.Task:
-    """Create a tracked background task with automatic cleanup and error logging."""
-    task = asyncio.create_task(coro, name=name)
-    _background_tasks.add(task)
-
-    def _done_callback(t: asyncio.Task) -> None:
-        _background_tasks.discard(t)
-        if t.cancelled():
-            return
-        exc = t.exception()
-        if exc:
-            logger.error("background_task_failed", extra={"task": t.get_name(), "error": str(exc)}, exc_info=exc)
-
-    task.add_done_callback(_done_callback)
-    return task
-
-
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, UploadFile
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-import app.database as db
 from app.database import get_session
 from app.dependencies import require_model_auth
 from app.models.content import ContentChunk
+from app.models.ingestion_job import IngestionJob
 from app.models.ingestion_source import IngestionSource
 from app.models.rag_model import RagModel
 from app.schemas.admin import PurgeResponse
@@ -60,7 +34,7 @@ from app.services.html import strip_html
 from app.services.ingest import ingest_content
 from app.services.r2 import is_configured as r2_is_configured
 from app.services.rate_limit import RateLimiter
-from app.services.url_validation import SSRFError, safe_get, validate_url
+from app.services.url_validation import SSRFError, validate_url
 from app.services.wikipedia import is_wikipedia_url
 
 router = APIRouter(tags=["sources"])
@@ -74,28 +48,6 @@ ALLOWED_EXTENSIONS = {".txt", ".md", ".html", ".htm", ".pdf", ".csv", ".json"}
 class ExtractionError(Exception):
     """Raised when text extraction from a file fails."""
 
-
-async def _mark_source_failed(model_id: int, source_identifier: str) -> None:
-    """Mark a source as failed using a fresh DB session.
-
-    Uses a new session because the caller's session may be in a broken
-    state (e.g. after a DB error or rolled-back transaction).
-    """
-    try:
-        async with db.async_session() as session:
-            result = await session.execute(
-                select(IngestionSource).where(
-                    IngestionSource.model_id == model_id,
-                    IngestionSource.source_identifier == source_identifier,
-                )
-            )
-            src = result.scalar_one_or_none()
-            if src:
-                src.status = "failed"
-                await session.commit()
-    except Exception:
-        logger.error("mark_source_failed_error", extra={"model_id": model_id, "source": source_identifier},
-                     exc_info=True)
 
 
 @router.get(
@@ -255,93 +207,6 @@ async def purge_sources(
     )
 
 
-# ---------------------------------------------------------------------------
-# Phase 2 — Unified POST /sources
-# ---------------------------------------------------------------------------
-
-async def _ingest_url_background(model_id: int, url: str, source_identifier: str) -> None:
-    """Fetch a URL server-side, strip HTML, and ingest."""
-    async with _ingest_semaphore, db.async_session() as session:
-        result = await session.execute(select(RagModel).where(RagModel.id == model_id))
-        model = result.scalar_one()
-
-        # Mark as pending first
-        src_result = await session.execute(
-            select(IngestionSource).where(
-                IngestionSource.model_id == model_id,
-                IngestionSource.source_identifier == source_identifier,
-            )
-        )
-        src = src_result.scalar_one_or_none()
-        if src:
-            src.status = "pending"
-            await session.commit()
-
-        try:
-            max_bytes = settings.max_upload_size_mb * 1024 * 1024
-            from app.services.crawler import _fetch_page
-            resp = await _fetch_page(url, timeout=30)
-            resp.raise_for_status()
-
-            content_length = int(resp.headers.get("content-length", 0))
-            if content_length > max_bytes:
-                raise ValueError(f"Response too large: {content_length} bytes")
-            if len(resp.content) > max_bytes:
-                raise ValueError(f"Response body too large: {len(resp.content)} bytes")
-
-            content_type_header = resp.headers.get("content-type", "")
-            if "html" in content_type_header:
-                text = strip_html(resp.text)
-                ct = "html"
-            else:
-                text = resp.text
-                ct = "text"
-
-            ingest_result = await ingest_content(
-                session=session,
-                model=model,
-                content=text,
-                source_identifier=source_identifier,
-                content_type=ct,
-                source_url=url,
-            )
-            logger.info("url_ingested", extra={"model_id": model_id, "url": url, "chunks": ingest_result.chunk_count,
-                                               "cost": ingest_result.embedding_cost})
-        except Exception:
-            logger.exception("url_ingestion_failed", extra={"model_id": model_id, "url": url})
-            await _mark_source_failed(model_id, source_identifier)
-
-
-async def _ingest_file_background_with_status(
-        model_id: int,
-        text: str,
-        source_identifier: str,
-        content_type: str,
-) -> None:
-    """Run file ingestion in the background, updating status on completion."""
-    async with _ingest_semaphore, db.async_session() as session:
-        result = await session.execute(select(RagModel).where(RagModel.id == model_id))
-        model = result.scalar_one()
-
-        try:
-            ingest_result = await ingest_content(
-                session=session,
-                model=model,
-                content=text,
-                source_identifier=source_identifier,
-                content_type=content_type,
-                source_url=source_identifier,
-            )
-            if ingest_result.skipped:
-                logger.info("file_skipped", extra={"model_id": model_id, "source": source_identifier})
-            else:
-                logger.info("file_ingested", extra={"model_id": model_id, "source": source_identifier,
-                                                    "chunks": ingest_result.chunk_count,
-                                                    "cost": ingest_result.embedding_cost})
-        except Exception:
-            logger.exception("file_ingestion_failed", extra={"model_id": model_id, "source": source_identifier})
-            await _mark_source_failed(model_id, source_identifier)
-
 
 @router.post(
     "/models/{slug}/sources",
@@ -429,7 +294,11 @@ async def create_source(
                 status="pending",
             ))
 
-        task_args.append((url, source_id))
+        session.add(IngestionJob(
+            model_id=model.id,
+            job_type="url",
+            job_params={"url": url, "source_identifier": source_id},
+        ))
         results.append(CreateSourceResponse(
             source_identifier=source_id,
             status="pending",
@@ -437,16 +306,6 @@ async def create_source(
         ))
 
     await session.commit()
-
-    # Fire background tasks after commit so they don't contend with the response
-    for url, source_id in task_args:
-        _create_background_task(
-            _ingest_url_background(
-                model_id=model.id,
-                url=url,
-                source_identifier=source_id,
-            )
-        )
 
     response.status_code = 202
     return results
@@ -552,8 +411,9 @@ async def upload_source(
         existing = src_result.scalar_one_or_none()
         if existing:
             existing.status = "pending"
+            existing.raw_content = text
         else:
-            pending_source = IngestionSource(
+            session.add(IngestionSource(
                 model_id=model.id,
                 source_identifier=filename,
                 content_hash="",
@@ -561,9 +421,14 @@ async def upload_source(
                 source_url=filename,
                 content_type=content_type,
                 status="pending",
-            )
-            session.add(pending_source)
+                raw_content=text,
+            ))
 
+        session.add(IngestionJob(
+            model_id=model.id,
+            job_type="file",
+            job_params={"source_identifier": filename, "content_type": content_type},
+        ))
         results.append(CreateSourceResponse(
             source_identifier=filename,
             status="pending",
@@ -573,16 +438,6 @@ async def upload_source(
     await session.commit()
     logger.info("upload_db_upserts",
                 extra={"duration_ms": round((time.monotonic() - t_db) * 1000, 1), "files": len(prepared_files)})
-
-    for filename, text, content_type in prepared_files:
-        _create_background_task(
-            _ingest_file_background_with_status(
-                model_id=model.id,
-                text=text,
-                source_identifier=filename,
-                content_type=content_type,
-            )
-        )
 
     return results
 
@@ -665,6 +520,11 @@ async def confirm_upload(
                 status="pending",
             ))
 
+        session.add(IngestionJob(
+            model_id=model.id,
+            job_type="r2_file",
+            job_params={"object_key": f.object_key, "filename": f.filename},
+        ))
         results.append(CreateSourceResponse(
             source_identifier=f.filename,
             status="pending",
@@ -672,163 +532,8 @@ async def confirm_upload(
         ))
 
     await session.commit()
-
-    for f in body.files:
-        _create_background_task(
-            _ingest_r2_file_background(
-                model_id=model.id,
-                object_key=f.object_key,
-                filename=f.filename,
-            )
-        )
-
     return results
 
-
-async def _ingest_r2_file_background(
-        model_id: int,
-        object_key: str,
-        filename: str,
-) -> None:
-    """Download file from R2, extract text, ingest, then delete from R2."""
-    from app.services.r2 import download_object, delete_object
-
-    async with _ingest_semaphore:
-        try:
-            # Download and extract text WITHOUT holding a DB connection.
-            raw = await download_object(object_key)
-            text, content_type = _extract_text(filename, raw)
-
-            # Now open a session only for the DB-bound ingestion work.
-            async with db.async_session() as session:
-                result = await session.execute(select(RagModel).where(RagModel.id == model_id))
-                model = result.scalar_one()
-
-                await ingest_content(
-                    session=session,
-                    model=model,
-                    content=text,
-                    source_identifier=filename,
-                    content_type=content_type,
-                    source_url=filename,
-                )
-            logger.info("r2_file_ingested", extra={"model_id": model_id, "filename": filename})
-        except Exception:
-            logger.exception("r2_file_ingestion_failed", extra={"model_id": model_id, "filename": filename})
-            await _mark_source_failed(model_id, filename)
-        finally:
-            try:
-                await delete_object(object_key)
-            except Exception:
-                logger.warning("r2_delete_failed", extra={"object_key": object_key})
-
-
-# ---------------------------------------------------------------------------
-# Site crawl
-# ---------------------------------------------------------------------------
-
-
-async def _crawl_site_background(model_id: int, crawl_request: CrawlRequest) -> None:
-    """Crawl a site and ingest discovered pages one at a time.
-
-    Uses the crawler's async generator to process pages as they're discovered,
-    keeping only one page of text in memory at a time.
-    """
-    from app.services.crawler import CrawledPage, FailedPage, crawl_site
-
-    page_count = 0
-    try:
-        async for item in crawl_site(
-            root_url=crawl_request.url,
-            max_pages=crawl_request.max_pages,
-            max_depth=crawl_request.max_depth,
-            prefix=crawl_request.prefix,
-            exclude_patterns=crawl_request.exclude_patterns,
-        ):
-            if isinstance(item, FailedPage):
-                # Record failed fetch so it's visible in the UI
-                async with db.async_session() as session:
-                    existing = await session.execute(
-                        select(IngestionSource).where(
-                            IngestionSource.model_id == model_id,
-                            IngestionSource.source_identifier == item.url,
-                        )
-                    )
-                    src = existing.scalar_one_or_none()
-                    if src:
-                        src.status = "failed"
-                    else:
-                        session.add(IngestionSource(
-                            model_id=model_id,
-                            source_identifier=item.url,
-                            content_hash="",
-                            chunk_count=0,
-                            source_url=item.url,
-                            content_type="html",
-                            status="failed",
-                        ))
-                    await session.commit()
-                continue
-
-            # CrawledPage — create pending source, then ingest
-            page_count += 1
-            async with db.async_session() as session:
-                existing = await session.execute(
-                    select(IngestionSource).where(
-                        IngestionSource.model_id == model_id,
-                        IngestionSource.source_identifier == item.url,
-                    )
-                )
-                src = existing.scalar_one_or_none()
-                if src:
-                    src.status = "pending"
-                else:
-                    session.add(IngestionSource(
-                        model_id=model_id,
-                        source_identifier=item.url,
-                        content_hash="",
-                        chunk_count=0,
-                        source_url=item.url,
-                        content_type=item.content_type,
-                        status="pending",
-                    ))
-                await session.commit()
-
-            async with _ingest_semaphore:
-                async with db.async_session() as session:
-                    result = await session.execute(select(RagModel).where(RagModel.id == model_id))
-                    model = result.scalar_one()
-
-                    try:
-                        await ingest_content(
-                            session=session,
-                            model=model,
-                            content=item.text,
-                            source_identifier=item.url,
-                            content_type=item.content_type,
-                            source_url=item.url,
-                        )
-                        logger.info("crawl_ingest_complete", extra={"model_id": model_id, "url": item.url})
-                    except Exception:
-                        logger.exception("crawl_ingest_failed", extra={"model_id": model_id, "url": item.url})
-                        await _mark_source_failed(model_id, item.url)
-
-    except Exception:
-        logger.exception("crawl_failed", extra={"model_id": model_id, "url": crawl_request.url})
-
-    # Flip root URL from "crawling" to appropriate final status
-    async with db.async_session() as session:
-        root_result = await session.execute(
-            select(IngestionSource).where(
-                IngestionSource.model_id == model_id,
-                IngestionSource.source_identifier == crawl_request.url,
-                IngestionSource.status == "crawling",
-            )
-        )
-        root_src = root_result.scalar_one_or_none()
-        if root_src:
-            root_src.status = "complete" if page_count > 0 else "failed"
-            await session.commit()
 
 
 @router.post(
@@ -870,9 +575,18 @@ async def crawl_site_endpoint(
             content_type="html",
             status="crawling",
         ))
+    session.add(IngestionJob(
+        model_id=model.id,
+        job_type="crawl",
+        job_params={
+            "url": body.url,
+            "max_pages": body.max_pages,
+            "max_depth": body.max_depth,
+            "prefix": body.prefix,
+            "exclude_patterns": body.exclude_patterns,
+        },
+    ))
     await session.commit()
-
-    _create_background_task(_crawl_site_background(model.id, body))
 
     return CrawlResponse(
         status="pending",

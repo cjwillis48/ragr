@@ -102,16 +102,17 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Update deployment image tag
+      - name: Update deployment image tags
         run: |
           IMAGE="ghcr.io/cjwillis48/ragr:${{ steps.vars.outputs.tag }}"
           sed -i "s|image: ghcr.io/cjwillis48/ragr:.*|image: ${IMAGE}|g" k8s/ragr/deployment.yaml
+          sed -i "s|image: ghcr.io/cjwillis48/ragr:.*|image: ${IMAGE}|g" k8s/ragr-worker/deployment.yaml
 
       - name: Commit updated manifest
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add k8s/ragr/deployment.yaml
+          git add k8s/ragr/deployment.yaml k8s/ragr-worker/deployment.yaml
           SOURCE_MSG=$(git log -1 --format='%s' ${{ github.sha }})
           git diff --staged --quiet || git commit -m "deploy: ragr ${{ steps.vars.outputs.tag }} — ${SOURCE_MSG} [skip ci]"
           git push

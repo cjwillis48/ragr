@@ -39,5 +39,10 @@ class Settings(BaseSettings):
     default_hosted_chat: bool = True
     default_max_tokens: int = 1024
 
+    worker_concurrency: int = 3
+    worker_poll_interval: float = 1.5
+    worker_stale_job_timeout_minutes: int = 10
+    worker_stale_crawl_timeout_minutes: int = 30
+
 
 settings = Settings()
