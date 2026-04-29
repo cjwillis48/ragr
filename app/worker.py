@@ -20,12 +20,11 @@ from app.models.ingestion_job import IngestionJob
 from app.models.ingestion_source import IngestionSource
 from app.models.rag_model import RagModel
 from app.services.html import strip_html
+from app.logging_setup import configure_logging
 from app.services.ingest import ingest_content
 
+configure_logging()
 logger = logging.getLogger("ragr.worker")
-
-# Import logging setup from main so worker gets structured JSON logs
-import app.main  # noqa: F401 — triggers logging configuration
 
 
 # ---------------------------------------------------------------------------
