@@ -1,17 +1,17 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: ragr
+  name: ragr-worker
   namespace: ragr
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: ragr
+      app: ragr-worker
   template:
     metadata:
       labels:
-        app: ragr
+        app: ragr-worker
     spec:
       imagePullSecrets:
         - name: ghcr-pull-secret
@@ -43,10 +43,9 @@ spec:
               memory: 512Mi
               cpu: 250m
       containers:
-        - name: ragr
+        - name: worker
           image: ghcr.io/cjwillis48/ragr:0.4.0-pr4.eb9ce07
-          ports:
-            - containerPort: 8000
+          command: ["python", "-m", "app.worker"]
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -73,13 +72,6 @@ spec:
                 secretKeyRef:
                   name: ragr-secrets
                   key: ENCRYPTION_KEY
-            - name: CLERK_SECRET_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: ragr-secrets
-                  key: CLERK_SECRET_KEY
-            - name: CONSOLE_ORIGINS
-              value: '["https://ragr.charliewillis.com"]'
             - name: R2_ACCOUNT_ID
               value: "0a5f0f60df717358942f04cca4d61c3a"
             - name: R2_BUCKET_NAME
@@ -94,29 +86,12 @@ spec:
                 secretKeyRef:
                   name: ragr-secrets
                   key: R2_SECRET_ACCESS_KEY
-          startupProbe:
-            httpGet:
-              path: /healthz
-              port: 8000
-            failureThreshold: 30
-            periodSeconds: 2
-          livenessProbe:
-            httpGet:
-              path: /healthz
-              port: 8000
-            periodSeconds: 10
-            timeoutSeconds: 5
-            failureThreshold: 6
-          readinessProbe:
-            httpGet:
-              path: /readyz
-              port: 8000
-            periodSeconds: 10
-            timeoutSeconds: 5
+            - name: WORKER_CONCURRENCY
+              value: "5"
           resources:
             requests:
               memory: 256Mi
-              cpu: 50m
+              cpu: 100m
             limits:
               memory: 2Gi
-              cpu: 500m
+              cpu: "1"

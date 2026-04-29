@@ -1,9 +1,10 @@
 import asyncio
 import hashlib
+import time
 from dataclasses import dataclass
 from functools import partial
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,6 +21,9 @@ class IngestResult:
     chunk_count: int
     skipped: bool
     embedding_cost: float
+    chunk_ms: int = 0
+    embed_ms: int = 0
+    db_ms: int = 0
 
 
 async def ingest_content(
@@ -57,6 +61,10 @@ async def ingest_content(
         return IngestResult(chunk_count=existing.chunk_count, skipped=True, embedding_cost=0.0)
 
     try:
+        # Skip fsync wait on commit — ingested content is re-derivable from raw_content,
+        # so durability of individual chunk inserts isn't critical. Big speedup on disk-bound writes.
+        await session.execute(text("SET LOCAL synchronous_commit = OFF"))
+
         # If source exists but hash changed, delete old chunks
         if existing:
             await session.execute(
@@ -67,27 +75,34 @@ async def ingest_content(
             )
 
         # Chunk the content (run in thread to avoid blocking the event loop)
+        t_chunk = time.perf_counter()
         chunks = await asyncio.get_running_loop().run_in_executor(
             None, partial(chunk_text, content, model.chunk_size, model.chunk_overlap)
         )
+        chunk_ms = round((time.perf_counter() - t_chunk) * 1000)
         if not chunks:
-            return IngestResult(chunk_count=0, skipped=False, embedding_cost=0.0)
+            return IngestResult(chunk_count=0, skipped=False, embedding_cost=0.0, chunk_ms=chunk_ms)
 
         # Embed all chunks
+        t_embed = time.perf_counter()
         embed = await embed_texts(chunks, model=model.embedding_model, voyage_api_key=model.custom_voyage_key)
+        embed_ms = round((time.perf_counter() - t_embed) * 1000)
 
-        # Store chunks
-        for chunk_text_str, embedding in zip(chunks, embed.embeddings):
-            chunk = ContentChunk(
-                model_id=model.id,
-                content=chunk_text_str,
-                embedding=embedding,
-                search_vector=func.to_tsvector("english", chunk_text_str),
-                source_url=source_url,
-                source_identifier=source_identifier,
-                content_type=content_type,
-            )
-            session.add(chunk)
+        # Store chunks (single multi-row INSERT instead of per-row session.add())
+        t_db = time.perf_counter()
+        chunk_rows = [
+            {
+                "model_id": model.id,
+                "content": chunk_text_str,
+                "embedding": embedding,
+                "search_vector": func.to_tsvector("english", chunk_text_str),
+                "source_url": source_url,
+                "source_identifier": source_identifier,
+                "content_type": content_type,
+            }
+            for chunk_text_str, embedding in zip(chunks, embed.embeddings)
+        ]
+        await session.execute(pg_insert(ContentChunk).values(chunk_rows))
 
         # Upsert ingestion source (handles race with pending row from upload endpoint)
         embedding_cost = estimate_embedding_cost(model.embedding_model, embed.total_tokens)
@@ -117,8 +132,12 @@ async def ingest_content(
         )
         await session.execute(stmt)
         await session.commit()
+        db_ms = round((time.perf_counter() - t_db) * 1000)
     except Exception:
         await session.rollback()
         raise
 
-    return IngestResult(chunk_count=len(chunks), skipped=False, embedding_cost=embedding_cost)
+    return IngestResult(
+        chunk_count=len(chunks), skipped=False, embedding_cost=embedding_cost,
+        chunk_ms=chunk_ms, embed_ms=embed_ms, db_ms=db_ms,
+    )
