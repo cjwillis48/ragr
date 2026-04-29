@@ -57,17 +57,19 @@ spec:
             exec:
               command: ["pg_isready", "-U", "ragr"]
             periodSeconds: 10
+            timeoutSeconds: 5
           livenessProbe:
             exec:
               command: ["pg_isready", "-U", "ragr"]
             periodSeconds: 10
-            failureThreshold: 3
+            timeoutSeconds: 5
+            failureThreshold: 6
           resources:
             requests:
               memory: 256Mi
               cpu: 100m
             limits:
-              memory: 512Mi
+              memory: 1Gi
               cpu: 500m
       volumes:
         - name: postgres-data
