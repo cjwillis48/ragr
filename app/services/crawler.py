@@ -113,13 +113,17 @@ async def crawl_site(
             break
 
         # Fetch all pages in the batch concurrently
+        import time as _time
+
         async def _process_url(url: str, depth: int):
+            t_fetch = _time.perf_counter()
             try:
                 resp = await _fetch_page(url, timeout=30)
                 resp.raise_for_status()
             except Exception as e:
-                logger.warning("crawl_fetch_failed", extra={"url": url, "error": str(e)}, exc_info=True)
+                logger.warning("crawl_fetch_failed", extra={"url": url, "error": str(e), "fetch_ms": round((_time.perf_counter() - t_fetch) * 1000)}, exc_info=True)
                 return FailedPage(url=url, error=str(e))
+            fetch_ms = round((_time.perf_counter() - t_fetch) * 1000)
 
             if len(resp.content) > 10 * 1024 * 1024:
                 logger.warning("crawl_page_oversized", extra={"url": url, "bytes": len(resp.content)})
@@ -129,16 +133,20 @@ async def crawl_site(
             if "html" not in content_type_header:
                 return None
 
+            t_parse = _time.perf_counter()
             raw_html = resp.text
             text = await asyncio.to_thread(strip_html, raw_html)
+            parse_ms = round((_time.perf_counter() - t_parse) * 1000)
 
             if not text or len(text) < 50:
                 return None
 
-            # Return page + raw HTML for link extraction
-            return (CrawledPage(url=url, text=text, content_type="html"), raw_html, depth)
+            return (CrawledPage(url=url, text=text, content_type="html"), raw_html, depth, fetch_ms, parse_ms)
 
+        t_batch = _time.perf_counter()
         results = await asyncio.gather(*[_process_url(url, depth) for url, depth in batch])
+        batch_ms = round((_time.perf_counter() - t_batch) * 1000)
+        logger.info("crawl_batch_done", extra={"batch_size": len(batch), "batch_ms": batch_ms})
 
         for result in results:
             if result is None:
@@ -148,12 +156,12 @@ async def crawl_site(
                 yield result
                 continue
 
-            page, raw_html, depth = result
+            page, raw_html, depth, fetch_ms, parse_ms = result
             page_count += 1
-            logger.info("crawled_page", extra={"url": page.url, "chars": len(page.text), "depth": depth, "page": page_count, "max_pages": max_pages})
-            yield page
 
-            # Discover links if we haven't hit depth limit
+            # Extract links and measure time
+            t_links = _time.perf_counter()
+            new_links = 0
             if depth < max_depth:
                 for link in await asyncio.to_thread(_extract_links, raw_html, page.url, domain, prefix):
                     if link not in visited:
@@ -167,5 +175,14 @@ async def crawl_site(
                                 continue
                         visited.add(link)
                         queue.append((link, depth + 1))
+                        new_links += 1
+            links_ms = round((_time.perf_counter() - t_links) * 1000)
+
+            logger.info("crawled_page", extra={
+                "url": page.url, "chars": len(page.text), "depth": depth,
+                "page": page_count, "max_pages": max_pages,
+                "fetch_ms": fetch_ms, "parse_ms": parse_ms, "links_ms": links_ms, "new_links": new_links,
+            })
+            yield page
 
     logger.info("crawl_complete", extra={"pages": page_count, "failed": failed_count, "root_url": root_url})
