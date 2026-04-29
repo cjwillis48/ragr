@@ -5,11 +5,9 @@ import fnmatch
 import logging
 from collections import deque
 from dataclasses import dataclass
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlparse
 
-from bs4 import BeautifulSoup
-
-from app.services.html import strip_html
+from app.services.html import parse_html
 from app.services.url_validation import safe_get, validate_url
 from app.services.wikipedia import fetch_wikipedia_html, is_wikipedia_domain, is_wikipedia_url, parse_wikipedia_url
 
@@ -36,31 +34,6 @@ def _normalize_url(url: str) -> str:
     return f"{parsed.scheme}://{parsed.netloc}{path}"
 
 
-def _extract_links(html: str, base_url: str, domain: str, prefix: str | None) -> list[str]:
-    """Extract same-domain links from HTML."""
-    soup = BeautifulSoup(html, "html.parser")
-    links = []
-    for a in soup.find_all("a", href=True):
-        href = a["href"]
-        absolute = urljoin(base_url, href)
-        parsed = urlparse(absolute)
-
-        # Same domain only
-        if parsed.netloc != domain:
-            continue
-
-        # Skip non-HTTP
-        if parsed.scheme not in ("http", "https"):
-            continue
-
-        # Optional prefix filter
-        if prefix and not parsed.path.startswith(prefix):
-            continue
-
-        normalized = _normalize_url(absolute)
-        links.append(normalized)
-
-    return links
 
 
 async def _fetch_page(url: str, timeout: float = 30):
@@ -116,10 +89,8 @@ async def crawl_site(
         import time as _time
 
         def _process_html(raw_html: str, url: str):
-            """CPU-bound: strip HTML and extract links in one thread call."""
-            text = strip_html(raw_html)
-            links = _extract_links(raw_html, url, domain, prefix)
-            return text, links
+            """CPU-bound: parse HTML once for text and links."""
+            return parse_html(raw_html, url, domain, prefix)
 
         async def _process_url(url: str, depth: int):
             t_fetch = _time.perf_counter()
