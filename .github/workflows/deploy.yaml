@@ -147,8 +147,7 @@ jobs:
         id: vars
         run: |
           VERSION=$(python3 -c "import re; print(re.search(r'^version\s*=\s*\"(.+?)\"', open('pyproject.toml').read(), re.M).group(1))")
-          SHORT_SHA=$(echo "${{ github.sha }}" | head -c 7)
-          echo "tag=${VERSION}-dev.${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "tag=${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Build and push
         uses: docker/build-push-action@v6
@@ -156,7 +155,9 @@ jobs:
           context: .
           platforms: linux/arm64
           push: true
-          tags: ghcr.io/cjwillis48/ragr:${{ steps.vars.outputs.tag }}
+          tags: |
+            ghcr.io/cjwillis48/ragr:${{ steps.vars.outputs.tag }}
+            ghcr.io/cjwillis48/ragr:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
