@@ -21,6 +21,27 @@ spec:
         runAsGroup: 1000
         seccompProfile:
           type: RuntimeDefault
+      initContainers:
+        - name: migrate
+          image: ghcr.io/cjwillis48/ragr:0.3.0-dev.d0084bc
+          command: ["alembic", "upgrade", "head"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: ragr-secrets
+                  key: DATABASE_URL
+          resources:
+            requests:
+              memory: 128Mi
+              cpu: 50m
+            limits:
+              memory: 512Mi
+              cpu: 250m
       containers:
         - name: worker
           image: ghcr.io/cjwillis48/ragr:0.3.0-pr4.1d916d7

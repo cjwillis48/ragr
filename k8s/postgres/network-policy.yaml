@@ -29,6 +29,9 @@ spec:
         - podSelector:
             matchLabels:
               app: ragr
+        - podSelector:
+            matchLabels:
+              app: ragr-worker
       ports:
         - protocol: TCP
           port: 5432
