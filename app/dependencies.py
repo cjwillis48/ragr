@@ -14,6 +14,7 @@ from app.database import get_session
 from app.middleware.log_context import MODEL_ID_CTX
 from app.models.model_api_key import ModelApiKey
 from app.models.rag_model import RagModel
+from app.services.users import get_or_create_user
 
 logger = logging.getLogger("ragr.auth")
 
@@ -36,6 +37,9 @@ def _get_clerk():
 class ClerkUser:
     user_id: str
     email: str | None = None
+    first_name: str | None = None
+    last_name: str | None = None
+    allow_global_keys: bool = False
 
     @property
     def is_superuser(self) -> bool:
@@ -69,6 +73,8 @@ async def _verify_clerk_token(request: Request) -> ClerkUser | None:
         return ClerkUser(
             user_id=payload.get("sub", ""),
             email=payload.get("email"),
+            first_name=payload.get("first_name"),
+            last_name=payload.get("last_name"),
         )
     except Exception:
         logger.error("clerk_token_verification_failed", exc_info=True)
@@ -139,11 +145,24 @@ async def get_active_model_by_slug(
 
 async def get_clerk_user(
     request: Request,
+    session: AsyncSession = Depends(get_session),
 ) -> ClerkUser:
-    """Extract and verify Clerk JWT. Raises 401 if not authenticated."""
+    """Extract and verify Clerk JWT. Raises 401 if not authenticated.
+
+    Upserts a row into the users table on every authenticated request so
+    we can recognize who's signed up and apply the global-key allowlist.
+    """
     user = await _verify_clerk_token(request)
     if user is None:
         raise HTTPException(status_code=401, detail="Authentication required")
+    db_user = await get_or_create_user(
+        session,
+        clerk_user_id=user.user_id,
+        email=user.email,
+        first_name=user.first_name,
+        last_name=user.last_name,
+    )
+    user.allow_global_keys = db_user.allow_global_keys
     return user
 
 
@@ -170,6 +189,13 @@ async def require_model_auth(
     # Try Clerk JWT
     clerk_user = await _verify_clerk_token(request)
     if clerk_user is not None:
+        await get_or_create_user(
+            session,
+            clerk_user_id=clerk_user.user_id,
+            email=clerk_user.email,
+            first_name=clerk_user.first_name,
+            last_name=clerk_user.last_name,
+        )
         # Superuser gets read-only access to all models
         if clerk_user.is_superuser and request.method in ("GET", "HEAD", "OPTIONS"):
             logger.info("superuser_access", extra={"user_id": clerk_user.user_id, "model": model.slug, "method": request.method, "path": request.url.path})
