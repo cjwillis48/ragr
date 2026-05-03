@@ -328,7 +328,7 @@ def _extract_text(filename: str, raw: bytes) -> tuple[str, str]:
         text = "\n\n".join(pages)
         page_count = len(pages)
         char_count = len(text.strip())
-        logger.info("pdf_extracted", extra={"filename": filename, "pages": page_count, "chars": char_count})
+        logger.info("pdf_extracted", extra={"source_filename": filename, "pages": page_count, "chars": char_count})
         if char_count < 100:
             raise ExtractionError("PDF appears to be scanned/image-based")
         return text, "pdf"
