@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened]
 
 jobs:
   unit:
@@ -22,6 +23,16 @@ jobs:
 
       - name: Run unit tests
         run: uv run pytest tests/unit/ -q --tb=short
+
+      - name: Check version bump
+        if: github.event_name == 'pull_request'
+        run: |
+          PR_VERSION=$(python3 -c "import re; print(re.search(r'^version\s*=\s*\"(.+?)\"', open('pyproject.toml').read(), re.M).group(1))")
+          MAIN_VERSION=$(git fetch origin main --quiet && git show origin/main:pyproject.toml | python3 -c "import re,sys; print(re.search(r'^version\s*=\s*\"(.+?)\"', sys.stdin.read(), re.M).group(1))")
+          if [ "$PR_VERSION" = "$MAIN_VERSION" ]; then
+            echo "::error::Version in pyproject.toml ($PR_VERSION) has not been bumped from main. Update the version before merging."
+            exit 1
+          fi
 
   integration:
     runs-on: ubuntu-latest
@@ -61,6 +72,64 @@ jobs:
       - name: Run integration tests
         run: uv run pytest tests/integration/ -q --tb=short
 
+  build-pr-image:
+    if: github.event_name == 'pull_request'
+    needs: [unit, integration]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Compute image tag
+        id: vars
+        run: |
+          VERSION=$(python3 -c "import re; print(re.search(r'^version\s*=\s*\"(.+?)\"', open('pyproject.toml').read(), re.M).group(1))")
+          SHORT_SHA=$(echo "${{ github.event.pull_request.head.sha }}" | head -c 7)
+          echo "tag=${VERSION}-pr${{ github.event.pull_request.number }}.${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push PR image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/arm64
+          push: true
+          tags: ghcr.io/cjwillis48/ragr:${{ steps.vars.outputs.tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Update deployment image tags
+        run: |
+          IMAGE="ghcr.io/cjwillis48/ragr:${{ steps.vars.outputs.tag }}"
+          sed -i "s|image: ghcr.io/cjwillis48/ragr:.*|image: ${IMAGE}|g" k8s/ragr/deployment.yaml
+          sed -i "s|image: ghcr.io/cjwillis48/ragr:.*|image: ${IMAGE}|g" k8s/ragr-worker/deployment.yaml
+
+      - name: Commit updated manifest
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add k8s/ragr/deployment.yaml k8s/ragr-worker/deployment.yaml
+          git diff --staged --quiet || git commit -m "deploy: ragr ${{ steps.vars.outputs.tag }} [skip ci]"
+          git push
+
   build-and-push:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [unit, integration]
@@ -89,8 +158,7 @@ jobs:
         id: vars
         run: |
           VERSION=$(python3 -c "import re; print(re.search(r'^version\s*=\s*\"(.+?)\"', open('pyproject.toml').read(), re.M).group(1))")
-          SHORT_SHA=$(echo "${{ github.sha }}" | head -c 7)
-          echo "tag=${VERSION}-dev.${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "tag=${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Build and push
         uses: docker/build-push-action@v6
@@ -98,20 +166,23 @@ jobs:
           context: .
           platforms: linux/arm64
           push: true
-          tags: ghcr.io/cjwillis48/ragr:${{ steps.vars.outputs.tag }}
+          tags: |
+            ghcr.io/cjwillis48/ragr:${{ steps.vars.outputs.tag }}
+            ghcr.io/cjwillis48/ragr:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Update deployment image tag
+      - name: Update deployment image tags
         run: |
           IMAGE="ghcr.io/cjwillis48/ragr:${{ steps.vars.outputs.tag }}"
           sed -i "s|image: ghcr.io/cjwillis48/ragr:.*|image: ${IMAGE}|g" k8s/ragr/deployment.yaml
+          sed -i "s|image: ghcr.io/cjwillis48/ragr:.*|image: ${IMAGE}|g" k8s/ragr-worker/deployment.yaml
 
       - name: Commit updated manifest
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add k8s/ragr/deployment.yaml
+          git add k8s/ragr/deployment.yaml k8s/ragr-worker/deployment.yaml
           SOURCE_MSG=$(git log -1 --format='%s' ${{ github.sha }})
           git diff --staged --quiet || git commit -m "deploy: ragr ${{ steps.vars.outputs.tag }} — ${SOURCE_MSG} [skip ci]"
           git push

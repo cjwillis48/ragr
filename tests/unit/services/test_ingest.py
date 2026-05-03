@@ -38,7 +38,8 @@ class TestIngestContent:
         assert result.chunk_count == 2
         assert result.skipped is False
         assert result.embedding_cost == 0.001
-        assert session.add.call_count == 2  # two chunks added
+        # session.execute called: existing check, SET LOCAL, chunk bulk insert, source upsert
+        assert session.execute.call_count >= 4
         session.commit.assert_called_once()
 
     async def test_idempotent_same_hash(self, sample_model):

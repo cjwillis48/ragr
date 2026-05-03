@@ -1,0 +1,74 @@
+# Default deny all traffic to/from worker pods
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ragr-worker-default-deny
+  namespace: ragr
+spec:
+  podSelector:
+    matchLabels:
+      app: ragr-worker
+  policyTypes:
+    - Ingress
+    - Egress
+---
+# Allow worker to reach postgres
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ragr-worker-egress-to-postgres
+  namespace: ragr
+spec:
+  podSelector:
+    matchLabels:
+      app: ragr-worker
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+# Allow worker DNS resolution
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ragr-worker-dns
+  namespace: ragr
+spec:
+  podSelector:
+    matchLabels:
+      app: ragr-worker
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+# Allow worker to reach external APIs (Anthropic, Voyage, Wikipedia, R2)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ragr-worker-external-https
+  namespace: ragr
+spec:
+  podSelector:
+    matchLabels:
+      app: ragr-worker
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - protocol: TCP
+          port: 443

@@ -1,7 +1,8 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from app.services.crawler import _normalize_url, _extract_links, crawl_site, CrawledPage, FailedPage
+from app.services.crawler import _normalize_url, crawl_site, CrawledPage, FailedPage
+from app.services.html import parse_html
 
 
 async def _collect(gen):
@@ -32,37 +33,37 @@ class TestNormalizeUrl:
         assert _normalize_url("http://sub.example.com:8080/path") == "http://sub.example.com:8080/path"
 
 
-class TestExtractLinks:
+class TestParseHtmlLinks:
     def test_same_domain_only(self):
         html = '<a href="https://example.com/page1">Link</a><a href="https://other.com/page">Other</a>'
-        links = _extract_links(html, "https://example.com", "example.com", None)
+        _text, links = parse_html(html, "https://example.com", "example.com", None)
         assert len(links) == 1
         assert "example.com/page1" in links[0]
 
     def test_relative_links_resolved(self):
         html = '<a href="/about">About</a>'
-        links = _extract_links(html, "https://example.com/page", "example.com", None)
+        _text, links = parse_html(html, "https://example.com/page", "example.com", None)
         assert links == ["https://example.com/about"]
 
     def test_non_http_filtered(self):
         html = '<a href="mailto:test@example.com">Email</a><a href="javascript:void(0)">JS</a>'
-        links = _extract_links(html, "https://example.com", "example.com", None)
+        _text, links = parse_html(html, "https://example.com", "example.com", None)
         assert links == []
 
     def test_prefix_filter(self):
         html = '<a href="/docs/api">API</a><a href="/blog/post">Blog</a>'
-        links = _extract_links(html, "https://example.com", "example.com", "/docs")
+        _text, links = parse_html(html, "https://example.com", "example.com", "/docs")
         assert len(links) == 1
         assert "/docs/api" in links[0]
 
     def test_no_prefix_returns_all_same_domain(self):
         html = '<a href="/a">A</a><a href="/b">B</a>'
-        links = _extract_links(html, "https://example.com", "example.com", None)
+        _text, links = parse_html(html, "https://example.com", "example.com", None)
         assert len(links) == 2
 
     def test_fragments_stripped_in_output(self):
         html = '<a href="/page#section">Link</a>'
-        links = _extract_links(html, "https://example.com", "example.com", None)
+        _text, links = parse_html(html, "https://example.com", "example.com", None)
         assert "#" not in links[0]
 
 
