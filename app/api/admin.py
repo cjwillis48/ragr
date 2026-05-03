@@ -170,6 +170,7 @@ async def top_sources(
 @router.get(
     "/models/{slug}/conversations",
     response_model=ConversationListResponse,
+    include_in_schema=False,
 )
 async def list_conversations(
         model: RagModel = Depends(require_model_auth),
@@ -203,6 +204,7 @@ async def list_conversations(
 @router.get(
     "/models/{slug}/conversations/{conversation_id}/messages",
     response_model=ConversationDetailResponse,
+    include_in_schema=False,
 )
 async def get_conversation_messages(
         conversation_id: int,
@@ -235,6 +237,7 @@ async def get_conversation_messages(
 @router.delete(
     "/models/{slug}/conversations/{conversation_id}",
     status_code=204,
+    include_in_schema=False,
 )
 async def delete_conversation(
         conversation_id: int,
@@ -292,6 +295,7 @@ async def get_chunks(
 @router.get(
     "/models/{slug}/system-prompt-history",
     response_model=list[SystemPromptHistoryResponse],
+    include_in_schema=False,
 )
 async def list_system_prompt_history(
         model: RagModel = Depends(require_model_auth),
@@ -309,6 +313,7 @@ async def list_system_prompt_history(
 @router.post(
     "/models/{slug}/system-prompt-history/{history_id}/rollback",
     response_model=SystemPromptHistoryResponse,
+    include_in_schema=False,
 )
 async def rollback_system_prompt(
         history_id: int,
@@ -360,7 +365,7 @@ class GenerateSystemPromptRequest(BaseModel):
     input_text: str = Field("", max_length=5000)
 
 
-@router.post("/models/{slug}/generate-system-prompt")
+@router.post("/models/{slug}/generate-system-prompt", include_in_schema=False)
 async def generate_system_prompt(
         body: GenerateSystemPromptRequest,
         model: RagModel = Depends(require_model_auth),
@@ -408,6 +413,7 @@ class AcceptGeneratedPromptRequest(BaseModel):
 @router.post(
     "/models/{slug}/system-prompt-history/accept-generated",
     response_model=SystemPromptHistoryResponse,
+    include_in_schema=False,
 )
 async def accept_generated_prompt(
         body: AcceptGeneratedPromptRequest,
@@ -445,6 +451,7 @@ Respond with ONLY a JSON array of strings, no explanations:
 @router.post(
     "/models/{slug}/generate-sample-questions",
     response_model=list[str],
+    include_in_schema=False,
 )
 async def generate_sample_questions(
     model: RagModel = Depends(require_model_auth),

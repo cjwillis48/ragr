@@ -77,13 +77,13 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 app.add_middleware(DynamicCORSMiddleware)
 
 
-@app.get("/healthz")
+@app.get("/healthz", include_in_schema=False)
 async def healthz():
     """K8s liveness probe. Always 200 if the process is up."""
     return {"status": "ok"}
 
 
-@app.get("/readyz")
+@app.get("/readyz", include_in_schema=False)
 async def readyz(session: AsyncSession = Depends(get_session)):
     """K8s readiness probe. 200 if the app can reach the database."""
     try:

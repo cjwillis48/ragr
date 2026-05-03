@@ -349,6 +349,7 @@ def _extract_text(filename: str, raw: bytes) -> tuple[str, str]:
     "/models/{slug}/sources/upload",
     response_model=list[CreateSourceResponse],
     status_code=202,
+    include_in_schema=False,
 )
 async def upload_source(
         files: list[UploadFile],
@@ -452,6 +453,7 @@ async def upload_source(
 @router.post(
     "/models/{slug}/sources/upload/presign",
     response_model=PresignedUploadResponse,
+    include_in_schema=False,
 )
 async def presign_upload(
         body: PresignedUploadRequest,
@@ -483,6 +485,7 @@ async def presign_upload(
     "/models/{slug}/sources/upload/confirm",
     response_model=list[CreateSourceResponse],
     status_code=202,
+    include_in_schema=False,
 )
 async def confirm_upload(
         body: ConfirmUploadRequest,

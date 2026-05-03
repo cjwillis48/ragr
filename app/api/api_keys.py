@@ -27,6 +27,7 @@ def _generate_key() -> str:
     "/models/{slug}/api-keys",
     response_model=ApiKeyCreateResponse,
     status_code=201,
+    include_in_schema=False,
 )
 async def create_api_key(
     body: ApiKeyCreate,
@@ -60,6 +61,7 @@ async def create_api_key(
 @router.get(
     "/models/{slug}/api-keys",
     response_model=list[ApiKeyRead],
+    include_in_schema=False,
 )
 async def list_api_keys(
     model: RagModel = Depends(require_model_auth),
@@ -77,6 +79,7 @@ async def list_api_keys(
 @router.delete(
     "/models/{slug}/api-keys/{key_id}",
     status_code=204,
+    include_in_schema=False,
 )
 async def revoke_api_key(
     key_id: int,

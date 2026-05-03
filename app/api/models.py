@@ -42,7 +42,7 @@ router = APIRouter(prefix="/models", tags=["models"])
 logger = logging.getLogger("ragr.models")
 
 
-@router.post("", response_model=RagModelRead, status_code=201)
+@router.post("", response_model=RagModelRead, status_code=201, include_in_schema=False)
 async def create_model(
     body: RagModelCreate,
     clerk_user: ClerkUser = Depends(get_clerk_user),
@@ -90,7 +90,7 @@ async def create_model(
     return RagModelRead.from_model(model)
 
 
-@router.get("", response_model=list[RagModelRead])
+@router.get("", response_model=list[RagModelRead], include_in_schema=False)
 async def list_models(
     clerk_user: ClerkUser = Depends(get_clerk_user),
     session: AsyncSession = Depends(get_session),
@@ -178,7 +178,7 @@ async def update_model(
     return RagModelRead.from_model(model, has_content=has_content)
 
 
-@router.delete("/{slug}", status_code=204)
+@router.delete("/{slug}", status_code=204, include_in_schema=False)
 async def delete_model(
     model: RagModel = Depends(require_model_auth),
     session: AsyncSession = Depends(get_session),
@@ -196,7 +196,7 @@ async def get_theme(model: RagModel = Depends(get_active_model_by_slug)):
     return ChatTheme(**(model.chat_theme or {}))
 
 
-@router.patch("/{slug}/theme", response_model=ChatTheme)
+@router.patch("/{slug}/theme", response_model=ChatTheme, include_in_schema=False)
 async def update_theme(
     body: ChatTheme,
     model: RagModel = Depends(require_model_auth),

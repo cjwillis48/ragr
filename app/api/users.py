@@ -18,7 +18,7 @@ class CurrentUser(BaseModel):
     allow_global_keys: bool
 
 
-@router.get("/me", response_model=CurrentUser)
+@router.get("/me", response_model=CurrentUser, include_in_schema=False)
 async def get_me(
     clerk_user: ClerkUser = Depends(get_clerk_user),
     session: AsyncSession = Depends(get_session),
