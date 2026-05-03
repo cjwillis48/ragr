@@ -14,7 +14,7 @@ from app.dependencies import (
     get_clerk_user,
     require_model_auth,
 )
-from app.models.content import ContentChunk
+from app.models.ingestion_source import IngestionSource
 from app.models.rag_model import RagModel
 from app.models.system_prompt_history import SystemPromptHistory
 from app.schemas.models import ChatTheme, RagModelCreate, RagModelPublic, RagModelRead, RagModelUpdate
@@ -27,14 +27,16 @@ PLATFORM_KEYS_REQUIRED_DETAIL = (
 )
 
 # Fields whose value is baked into stored chunks/embeddings. Once any content
-# has been ingested, changing them silently breaks retrieval (mismatched chunk
-# boundaries or vector spaces), so we lock them at the API layer.
+# has been ingested (or is in flight), changing them silently breaks retrieval
+# (mismatched chunk boundaries or vector spaces), so we lock them at the API
+# layer. We check IngestionSource — it covers both completed and pending state,
+# and matches the user's "I added something" mental model.
 _CONTENT_LOCKED_FIELDS = ("chunk_size", "chunk_overlap", "embedding_model")
 
 
 async def _model_has_content(session: AsyncSession, model_id: int) -> bool:
     result = await session.execute(
-        select(ContentChunk.id).where(ContentChunk.model_id == model_id).limit(1)
+        select(IngestionSource.id).where(IngestionSource.model_id == model_id).limit(1)
     )
     return result.scalar_one_or_none() is not None
 
@@ -102,7 +104,16 @@ async def list_models(
         query = query.where(RagModel.owner_id == clerk_user.user_id)
 
     result = await session.execute(query)
-    return [RagModelRead.from_model(m) for m in result.scalars().all()]
+    models = result.scalars().all()
+
+    ids_with_content = (await session.execute(
+        select(IngestionSource.model_id).distinct().where(
+            IngestionSource.model_id.in_([m.id for m in models])
+        )
+    )).scalars().all() if models else []
+    has_content_ids = set(ids_with_content)
+
+    return [RagModelRead.from_model(m, has_content=(m.id in has_content_ids)) for m in models]
 
 
 @router.get("/{slug}/info", response_model=RagModelPublic)
