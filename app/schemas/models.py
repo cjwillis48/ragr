@@ -173,6 +173,7 @@ class RagModelRead(BaseModel):
     budget_limit: float
     has_custom_anthropic_key: bool = False
     has_custom_voyage_key: bool = False
+    has_content: bool = False
     is_active: bool
     created_at: datetime
     updated_at: datetime
@@ -180,8 +181,9 @@ class RagModelRead(BaseModel):
     model_config = {"from_attributes": True}
 
     @classmethod
-    def from_model(cls, model) -> "RagModelRead":
+    def from_model(cls, model, has_content: bool = False) -> "RagModelRead":
         data = cls.model_validate(model)
         data.has_custom_anthropic_key = bool(model.custom_anthropic_key)
         data.has_custom_voyage_key = bool(model.custom_voyage_key)
+        data.has_content = has_content
         return data

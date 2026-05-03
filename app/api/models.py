@@ -14,6 +14,7 @@ from app.dependencies import (
     get_clerk_user,
     require_model_auth,
 )
+from app.models.content import ContentChunk
 from app.models.rag_model import RagModel
 from app.models.system_prompt_history import SystemPromptHistory
 from app.schemas.models import ChatTheme, RagModelCreate, RagModelPublic, RagModelRead, RagModelUpdate
@@ -24,6 +25,18 @@ PLATFORM_KEYS_REQUIRED_DETAIL = (
     "This account is not approved to use the platform's API keys. "
     "Provide your own Anthropic and Voyage keys (custom_anthropic_key, custom_voyage_key)."
 )
+
+# Fields whose value is baked into stored chunks/embeddings. Once any content
+# has been ingested, changing them silently breaks retrieval (mismatched chunk
+# boundaries or vector spaces), so we lock them at the API layer.
+_CONTENT_LOCKED_FIELDS = ("chunk_size", "chunk_overlap", "embedding_model")
+
+
+async def _model_has_content(session: AsyncSession, model_id: int) -> bool:
+    result = await session.execute(
+        select(ContentChunk.id).where(ContentChunk.model_id == model_id).limit(1)
+    )
+    return result.scalar_one_or_none() is not None
 
 router = APIRouter(prefix="/models", tags=["models"])
 logger = logging.getLogger("ragr.models")
@@ -105,9 +118,13 @@ async def get_model_public(
 
 
 @router.get("/{slug}", response_model=RagModelRead)
-async def get_model(model: RagModel = Depends(require_model_auth)):
+async def get_model(
+    model: RagModel = Depends(require_model_auth),
+    session: AsyncSession = Depends(get_session),
+):
     """Get a RAG model by slug."""
-    return RagModelRead.from_model(model)
+    has_content = await _model_has_content(session, model.id)
+    return RagModelRead.from_model(model, has_content=has_content)
 
 
 @router.patch("/{slug}", response_model=RagModelRead)
@@ -118,6 +135,22 @@ async def update_model(
 ):
     """Update a RAG model's configuration."""
     update_data = body.model_dump(exclude_unset=True)
+
+    has_content = await _model_has_content(session, model.id)
+    if has_content:
+        attempted_locked = [
+            f for f in _CONTENT_LOCKED_FIELDS
+            if f in update_data and update_data[f] != getattr(model, f)
+        ]
+        if attempted_locked:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Cannot change {', '.join(attempted_locked)} after content is ingested — "
+                    "doing so would invalidate stored chunks and break references in past chats. "
+                    "Delete all sources first if you need to re-chunk."
+                ),
+            )
 
     # Record system prompt change in history
     if "system_prompt" in update_data and update_data["system_prompt"] != model.system_prompt:
@@ -142,7 +175,7 @@ async def update_model(
     logger.info("model_updated", extra={"slug": model.slug, "fields": list(update_data.keys())})
     if "allowed_origins" in update_data:
         await sync_origins(session)
-    return RagModelRead.from_model(model)
+    return RagModelRead.from_model(model, has_content=has_content)
 
 
 @router.delete("/{slug}", status_code=204)
