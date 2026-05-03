@@ -76,8 +76,10 @@ async def _verify_clerk_token(request: Request) -> ClerkUser | None:
             first_name=payload.get("first_name"),
             last_name=payload.get("last_name"),
         )
-    except Exception:
-        logger.error("clerk_token_verification_failed", exc_info=True)
+    except Exception as e:
+        # Don't include exc_info — the SDK's exception representation
+        # could echo the bearer token back into logs.
+        logger.warning("clerk_token_verification_failed", extra={"error_type": type(e).__name__})
         return None
 
 

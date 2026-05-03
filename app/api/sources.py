@@ -495,10 +495,10 @@ async def confirm_upload(
 
     results = []
     for f in body.files:
-        # Reject path traversal attempts
-        if ".." in f.object_key:
+        # Reject path traversal — component-level check so legitimate filenames
+        # like "report..final.pdf" still pass while "uploads/{id}/../other" doesn't.
+        if ".." in f.object_key.split("/"):
             raise HTTPException(status_code=422, detail=f"Invalid object key: {f.object_key}")
-        # Validate object key belongs to this model
         if not f.object_key.startswith(f"uploads/{model.id}/"):
             raise HTTPException(status_code=403, detail=f"Object key does not belong to this model: {f.object_key}")
 

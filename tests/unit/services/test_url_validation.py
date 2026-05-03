@@ -48,6 +48,19 @@ class TestValidateUrl:
             with pytest.raises(SSRFError, match="private/reserved"):
                 await validate_url("https://evil.com")
 
+    async def test_multicast_blocked(self):
+        for ip in ["224.0.0.1", "239.255.255.250"]:
+            with patch("app.services.url_validation.asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
+                mock_thread.return_value = _fake_getaddrinfo(ip)
+                with pytest.raises(SSRFError, match="private/reserved"):
+                    await validate_url("https://evil.com")
+
+    async def test_unspecified_blocked(self):
+        with patch("app.services.url_validation.asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
+            mock_thread.return_value = _fake_getaddrinfo("0.0.0.0")
+            with pytest.raises(SSRFError, match="private/reserved"):
+                await validate_url("https://evil.com")
+
     async def test_dns_failure(self):
         with patch("app.services.url_validation.asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
             mock_thread.side_effect = socket.gaierror("DNS failed")
