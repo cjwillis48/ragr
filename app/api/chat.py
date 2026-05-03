@@ -22,6 +22,7 @@ from app.schemas.chat import ChatRequest, ChatResponse
 from app.services.budget import check_budget, estimate_cost, estimate_rerank_cost, record_usage
 from app.services.generation import GenerationResult, generate_answer, generate_answer_stream
 from app.services.retrieval import ChunkScore, RetrievalResult, retrieve_with_threshold
+from app.services.users import owner_can_use_global_keys
 
 _chat_limiter = RateLimiter(max_requests=settings.rate_limit_per_min, window_seconds=60)
 
@@ -149,6 +150,9 @@ async def chat(
 
     if not await check_budget(session, model):
         raise HTTPException(status_code=429, detail="Model has exceeded its monthly budget")
+
+    if (not model.custom_anthropic_key or not model.custom_voyage_key) and not await owner_can_use_global_keys(session, model.owner_id):
+        raise HTTPException(status_code=403, detail="Model owner is not approved to use the platform's API keys.")
 
     # Resolve session ID
     session_id = body.session_id or str(uuid.uuid4())

@@ -18,6 +18,12 @@ from app.models.rag_model import RagModel
 from app.models.system_prompt_history import SystemPromptHistory
 from app.schemas.models import ChatTheme, RagModelCreate, RagModelPublic, RagModelRead, RagModelUpdate
 from app.services.budget import check_budget
+from app.services.users import owner_can_use_global_keys
+
+PLATFORM_KEYS_REQUIRED_DETAIL = (
+    "This account is not approved to use the platform's API keys. "
+    "Provide your own Anthropic and Voyage keys (custom_anthropic_key, custom_voyage_key)."
+)
 
 router = APIRouter(prefix="/models", tags=["models"])
 logger = logging.getLogger("ragr.models")
@@ -35,6 +41,9 @@ async def create_model(
     )
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Model with this slug already exists")
+
+    if (not body.custom_anthropic_key or not body.custom_voyage_key) and not await owner_can_use_global_keys(session, clerk_user.user_id):
+        raise HTTPException(status_code=403, detail=PLATFORM_KEYS_REQUIRED_DETAIL)
 
     model = RagModel(
         owner_id=clerk_user.user_id,
@@ -124,6 +133,10 @@ async def update_model(
 
     for field, value in update_data.items():
         setattr(model, field, value)
+
+    if (not model.custom_anthropic_key or not model.custom_voyage_key) and not await owner_can_use_global_keys(session, model.owner_id):
+        raise HTTPException(status_code=403, detail=PLATFORM_KEYS_REQUIRED_DETAIL)
+
     await session.commit()
     await session.refresh(model)
     logger.info("model_updated", extra={"slug": model.slug, "fields": list(update_data.keys())})
