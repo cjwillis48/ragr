@@ -118,3 +118,18 @@ class TestUsersTableSync:
         user = result.scalar_one_or_none()
         assert user is not None
         assert user.allow_global_keys is True
+
+
+class TestCurrentUserEndpoint:
+    async def test_me_returns_allowlisted(self, client, test_user_id):
+        resp = await client.get("/users/me")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["user_id"] == test_user_id
+        assert data["allow_global_keys"] is True
+
+    async def test_me_reflects_revoked_allowlist(self, client, set_test_user_allowlist):
+        await set_test_user_allowlist(False)
+        resp = await client.get("/users/me")
+        assert resp.status_code == 200
+        assert resp.json()["allow_global_keys"] is False
