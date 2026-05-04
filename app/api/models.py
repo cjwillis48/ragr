@@ -14,16 +14,37 @@ from app.dependencies import (
     get_clerk_user,
     require_model_auth,
 )
+from app.models.ingestion_source import IngestionSource
 from app.models.rag_model import RagModel
 from app.models.system_prompt_history import SystemPromptHistory
 from app.schemas.models import ChatTheme, RagModelCreate, RagModelPublic, RagModelRead, RagModelUpdate
 from app.services.budget import check_budget
+from app.services.users import owner_can_use_global_keys
+
+PLATFORM_KEYS_REQUIRED_DETAIL = (
+    "This account is not approved to use the platform's API keys. "
+    "Provide your own Anthropic and Voyage keys (custom_anthropic_key, custom_voyage_key)."
+)
+
+# Fields whose value is baked into stored chunks/embeddings. Once any content
+# has been ingested (or is in flight), changing them silently breaks retrieval
+# (mismatched chunk boundaries or vector spaces), so we lock them at the API
+# layer. We check IngestionSource — it covers both completed and pending state,
+# and matches the user's "I added something" mental model.
+_CONTENT_LOCKED_FIELDS = ("chunk_size", "chunk_overlap", "embedding_model")
+
+
+async def _model_has_content(session: AsyncSession, model_id: int) -> bool:
+    result = await session.execute(
+        select(IngestionSource.id).where(IngestionSource.model_id == model_id).limit(1)
+    )
+    return result.scalar_one_or_none() is not None
 
 router = APIRouter(prefix="/models", tags=["models"])
 logger = logging.getLogger("ragr.models")
 
 
-@router.post("", response_model=RagModelRead, status_code=201)
+@router.post("", response_model=RagModelRead, status_code=201, include_in_schema=False)
 async def create_model(
     body: RagModelCreate,
     clerk_user: ClerkUser = Depends(get_clerk_user),
@@ -35,6 +56,9 @@ async def create_model(
     )
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Model with this slug already exists")
+
+    if (not body.custom_anthropic_key or not body.custom_voyage_key) and not await owner_can_use_global_keys(session, clerk_user.user_id):
+        raise HTTPException(status_code=403, detail=PLATFORM_KEYS_REQUIRED_DETAIL)
 
     model = RagModel(
         owner_id=clerk_user.user_id,
@@ -68,7 +92,7 @@ async def create_model(
     return RagModelRead.from_model(model)
 
 
-@router.get("", response_model=list[RagModelRead])
+@router.get("", response_model=list[RagModelRead], include_in_schema=False)
 async def list_models(
     clerk_user: ClerkUser = Depends(get_clerk_user),
     session: AsyncSession = Depends(get_session),
@@ -80,7 +104,16 @@ async def list_models(
         query = query.where(RagModel.owner_id == clerk_user.user_id)
 
     result = await session.execute(query)
-    return [RagModelRead.from_model(m) for m in result.scalars().all()]
+    models = result.scalars().all()
+
+    ids_with_content = (await session.execute(
+        select(IngestionSource.model_id).distinct().where(
+            IngestionSource.model_id.in_([m.id for m in models])
+        )
+    )).scalars().all() if models else []
+    has_content_ids = set(ids_with_content)
+
+    return [RagModelRead.from_model(m, has_content=(m.id in has_content_ids)) for m in models]
 
 
 @router.get("/{slug}/info", response_model=RagModelPublic)
@@ -96,9 +129,13 @@ async def get_model_public(
 
 
 @router.get("/{slug}", response_model=RagModelRead)
-async def get_model(model: RagModel = Depends(require_model_auth)):
+async def get_model(
+    model: RagModel = Depends(require_model_auth),
+    session: AsyncSession = Depends(get_session),
+):
     """Get a RAG model by slug."""
-    return RagModelRead.from_model(model)
+    has_content = await _model_has_content(session, model.id)
+    return RagModelRead.from_model(model, has_content=has_content)
 
 
 @router.patch("/{slug}", response_model=RagModelRead)
@@ -109,6 +146,22 @@ async def update_model(
 ):
     """Update a RAG model's configuration."""
     update_data = body.model_dump(exclude_unset=True)
+
+    has_content = await _model_has_content(session, model.id)
+    if has_content:
+        attempted_locked = [
+            f for f in _CONTENT_LOCKED_FIELDS
+            if f in update_data and update_data[f] != getattr(model, f)
+        ]
+        if attempted_locked:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Cannot change {', '.join(attempted_locked)} after content is ingested — "
+                    "doing so would invalidate stored chunks and break references in past chats. "
+                    "Delete all sources first if you need to re-chunk."
+                ),
+            )
 
     # Record system prompt change in history
     if "system_prompt" in update_data and update_data["system_prompt"] != model.system_prompt:
@@ -124,15 +177,19 @@ async def update_model(
 
     for field, value in update_data.items():
         setattr(model, field, value)
+
+    if (not model.custom_anthropic_key or not model.custom_voyage_key) and not await owner_can_use_global_keys(session, model.owner_id):
+        raise HTTPException(status_code=403, detail=PLATFORM_KEYS_REQUIRED_DETAIL)
+
     await session.commit()
     await session.refresh(model)
     logger.info("model_updated", extra={"slug": model.slug, "fields": list(update_data.keys())})
     if "allowed_origins" in update_data:
         await sync_origins(session)
-    return RagModelRead.from_model(model)
+    return RagModelRead.from_model(model, has_content=has_content)
 
 
-@router.delete("/{slug}", status_code=204)
+@router.delete("/{slug}", status_code=204, include_in_schema=False)
 async def delete_model(
     model: RagModel = Depends(require_model_auth),
     session: AsyncSession = Depends(get_session),
@@ -150,7 +207,7 @@ async def get_theme(model: RagModel = Depends(get_active_model_by_slug)):
     return ChatTheme(**(model.chat_theme or {}))
 
 
-@router.patch("/{slug}/theme", response_model=ChatTheme)
+@router.patch("/{slug}/theme", response_model=ChatTheme, include_in_schema=False)
 async def update_theme(
     body: ChatTheme,
     model: RagModel = Depends(require_model_auth),

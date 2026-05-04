@@ -34,5 +34,5 @@ def sample_model():
     model.is_active = True
     model.deleted_at = None
     model.allowed_origins = []
-    model.sample_questions = []
+    model.sample_messages = []
     return model

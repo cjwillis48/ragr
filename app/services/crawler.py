@@ -5,11 +5,15 @@ import fnmatch
 import logging
 from collections import deque
 from dataclasses import dataclass
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 from app.services.html import parse_html
 from app.services.url_validation import safe_get, validate_url
 from app.services.wikipedia import fetch_wikipedia_html, is_wikipedia_domain, is_wikipedia_url, parse_wikipedia_url
+
+# Common pattern: redirects to add/remove a trailing slash, http→https, www→apex.
+# 5 hops covers nearly all real-world chains.
+_MAX_REDIRECTS = 5
 
 logger = logging.getLogger("ragr.crawler")
 
@@ -27,8 +31,12 @@ class FailedPage:
     error: str
 
 
-def _normalize_url(url: str) -> str:
-    """Strip fragment and trailing slash for dedup."""
+def normalize_url(url: str) -> str:
+    """Canonical form for dedup: strip fragment, ensure exactly one path slash.
+
+    Both `https://x.com` and `https://x.com/` collapse to `https://x.com/`,
+    so the API layer and the crawler agree on the same source_identifier.
+    """
     parsed = urlparse(url)
     path = parsed.path.rstrip("/") or "/"
     return f"{parsed.scheme}://{parsed.netloc}{path}"
@@ -37,12 +45,28 @@ def _normalize_url(url: str) -> str:
 
 
 async def _fetch_page(url: str, timeout: float = 30):
-    """Fetch a page, using Wikipedia API for Wikipedia URLs."""
+    """Fetch a page, using Wikipedia API for Wikipedia URLs.
+
+    Manually follows up to _MAX_REDIRECTS hops because safehttpx pins
+    follow_redirects=False (each hop could land on a private IP). Each
+    redirect target is re-validated through validate_url() before fetch.
+    """
     wp = parse_wikipedia_url(url)
     if wp:
         lang, title = wp
         return await fetch_wikipedia_html(lang, title, timeout=timeout)
-    return await safe_get(url, timeout=timeout)
+
+    current = url
+    for _ in range(_MAX_REDIRECTS + 1):
+        resp = await safe_get(current, timeout=timeout)
+        if resp.status_code not in (301, 302, 303, 307, 308):
+            return resp
+        location = resp.headers.get("location")
+        if not location:
+            return resp  # let the caller's raise_for_status handle this odd case
+        current = urljoin(current, location)
+        await validate_url(current)
+    raise RuntimeError(f"Exceeded {_MAX_REDIRECTS} redirects starting from {url}")
 
 
 async def crawl_site(
@@ -65,7 +89,7 @@ async def crawl_site(
     page_count = 0
     failed_count = 0
 
-    start = _normalize_url(root_url)
+    start = normalize_url(root_url)
     queue.append((start, 0))
     visited.add(start)
 

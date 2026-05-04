@@ -30,6 +30,7 @@ from app.schemas.sources import (
     SourceListResponse,
     SourceResponse,
 )
+from app.services.crawler import normalize_url
 from app.services.html import strip_html
 from app.services.ingest import ingest_content
 from app.services.r2 import is_configured as r2_is_configured
@@ -328,7 +329,7 @@ def _extract_text(filename: str, raw: bytes) -> tuple[str, str]:
         text = "\n\n".join(pages)
         page_count = len(pages)
         char_count = len(text.strip())
-        logger.info("pdf_extracted", extra={"filename": filename, "pages": page_count, "chars": char_count})
+        logger.info("pdf_extracted", extra={"source_filename": filename, "pages": page_count, "chars": char_count})
         if char_count < 100:
             raise ExtractionError("PDF appears to be scanned/image-based")
         return text, "pdf"
@@ -349,6 +350,7 @@ def _extract_text(filename: str, raw: bytes) -> tuple[str, str]:
     "/models/{slug}/sources/upload",
     response_model=list[CreateSourceResponse],
     status_code=202,
+    include_in_schema=False,
 )
 async def upload_source(
         files: list[UploadFile],
@@ -420,7 +422,7 @@ async def upload_source(
                 source_identifier=filename,
                 content_hash="",
                 chunk_count=0,
-                source_url=filename,
+                source_url="",
                 content_type=content_type,
                 status="pending",
                 raw_content=text,
@@ -452,6 +454,7 @@ async def upload_source(
 @router.post(
     "/models/{slug}/sources/upload/presign",
     response_model=PresignedUploadResponse,
+    include_in_schema=False,
 )
 async def presign_upload(
         body: PresignedUploadRequest,
@@ -483,6 +486,7 @@ async def presign_upload(
     "/models/{slug}/sources/upload/confirm",
     response_model=list[CreateSourceResponse],
     status_code=202,
+    include_in_schema=False,
 )
 async def confirm_upload(
         body: ConfirmUploadRequest,
@@ -495,10 +499,10 @@ async def confirm_upload(
 
     results = []
     for f in body.files:
-        # Reject path traversal attempts
-        if ".." in f.object_key:
+        # Reject path traversal — component-level check so legitimate filenames
+        # like "report..final.pdf" still pass while "uploads/{id}/../other" doesn't.
+        if ".." in f.object_key.split("/"):
             raise HTTPException(status_code=422, detail=f"Invalid object key: {f.object_key}")
-        # Validate object key belongs to this model
         if not f.object_key.startswith(f"uploads/{model.id}/"):
             raise HTTPException(status_code=403, detail=f"Object key does not belong to this model: {f.object_key}")
 
@@ -517,7 +521,7 @@ async def confirm_upload(
                 source_identifier=f.filename,
                 content_hash="",
                 chunk_count=0,
-                source_url=f.filename,
+                source_url="",
                 content_type="pending",
                 status="pending",
             ))
@@ -557,11 +561,16 @@ async def crawl_site_endpoint(
         except SSRFError as e:
             raise HTTPException(status_code=422, detail=str(e))
 
+    # Use the crawler's canonical form so the initial "crawling" row matches
+    # the source_identifier the crawler will produce for the same page.
+    # Otherwise `https://x.com` and `https://x.com/` create two rows.
+    crawl_root = normalize_url(body.url)
+
     # Create a crawling source immediately so the UI shows activity
     existing = await session.execute(
         select(IngestionSource).where(
             IngestionSource.model_id == model.id,
-            IngestionSource.source_identifier == body.url,
+            IngestionSource.source_identifier == crawl_root,
         )
     )
     src = existing.scalar_one_or_none()
@@ -570,10 +579,10 @@ async def crawl_site_endpoint(
     else:
         session.add(IngestionSource(
             model_id=model.id,
-            source_identifier=body.url,
+            source_identifier=crawl_root,
             content_hash="",
             chunk_count=0,
-            source_url=body.url,
+            source_url=crawl_root,
             content_type="html",
             status="crawling",
         ))
@@ -581,7 +590,7 @@ async def crawl_site_endpoint(
         model_id=model.id,
         job_type="crawl",
         job_params={
-            "url": body.url,
+            "url": crawl_root,
             "max_pages": body.max_pages,
             "max_depth": body.max_depth,
             "prefix": body.prefix,

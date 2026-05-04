@@ -6,5 +6,6 @@ from app.models.model_api_key import ModelApiKey
 from app.models.rag_model import RagModel
 from app.models.system_prompt_history import SystemPromptHistory
 from app.models.token_usage import TokenUsage
+from app.models.user import User
 
-__all__ = ["Base", "ContentChunk", "Conversation", "Message", "IngestionSource", "ModelApiKey", "RagModel", "SystemPromptHistory", "TokenUsage"]
+__all__ = ["Base", "ContentChunk", "Conversation", "Message", "IngestionSource", "ModelApiKey", "RagModel", "SystemPromptHistory", "TokenUsage", "User"]

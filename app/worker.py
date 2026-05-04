@@ -195,7 +195,7 @@ async def handle_file_job(job: IngestionJob) -> None:
         ingest_result = await ingest_content(
             session=session, model=model, content=src.raw_content,
             source_identifier=source_identifier, content_type=content_type,
-            source_url=source_identifier,
+            source_url=src.source_url or "",
         )
         if ingest_result.skipped:
             logger.info("file_skipped", extra={"model_id": model_id, "source": source_identifier})
@@ -208,7 +208,9 @@ async def handle_file_job(job: IngestionJob) -> None:
 
 
 async def handle_r2_file_job(job: IngestionJob) -> None:
-    """Download from R2, extract text, ingest, delete from R2."""
+    """Download from R2, extract text, ingest. Delete from R2 only on success
+    so that failed attempts can be retried against the same object.
+    """
     from pathlib import Path
 
     import pymupdf  # noqa: F401
@@ -220,43 +222,43 @@ async def handle_r2_file_job(job: IngestionJob) -> None:
 
     ALLOWED_EXTENSIONS = {".txt", ".md", ".html", ".htm", ".pdf", ".csv", ".json"}
 
-    try:
-        raw = await download_object(object_key)
+    raw = await download_object(object_key)
 
-        # Inline text extraction (same logic as _extract_text in sources.py)
-        ext = Path(filename).suffix.lower()
-        if ext not in ALLOWED_EXTENSIONS:
-            raise ValueError(f"Unsupported file type: {ext}")
+    # Inline text extraction (same logic as _extract_text in sources.py)
+    ext = Path(filename).suffix.lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        raise ValueError(f"Unsupported file type: {ext}")
 
-        if ext == ".pdf":
-            doc = pymupdf.Document(stream=raw, filetype="pdf")
-            pages = [page.get_text() for page in doc]
-            text = "\n\n".join(pages)
-            content_type = "pdf"
+    if ext == ".pdf":
+        doc = pymupdf.Document(stream=raw, filetype="pdf")
+        pages = [page.get_text() for page in doc]
+        text = "\n\n".join(pages)
+        content_type = "pdf"
+    else:
+        text = raw.decode("utf-8")
+        if ext in (".html", ".htm"):
+            text = await asyncio.to_thread(strip_html, text)
+            content_type = "html"
+        elif ext == ".md":
+            content_type = "markdown"
         else:
-            text = raw.decode("utf-8")
-            if ext in (".html", ".htm"):
-                text = await asyncio.to_thread(strip_html, text)
-                content_type = "html"
-            elif ext == ".md":
-                content_type = "markdown"
-            else:
-                content_type = "text"
+            content_type = "text"
 
-        async with db.async_session() as session:
-            result = await session.execute(select(RagModel).where(RagModel.id == model_id))
-            model = result.scalar_one()
+    async with db.async_session() as session:
+        result = await session.execute(select(RagModel).where(RagModel.id == model_id))
+        model = result.scalar_one()
 
-            await ingest_content(
-                session=session, model=model, content=text,
-                source_identifier=filename, content_type=content_type, source_url=filename,
-            )
-        logger.info("r2_file_ingested", extra={"model_id": model_id, "filename": filename})
-    finally:
-        try:
-            await delete_object(object_key)
-        except Exception:
-            logger.warning("r2_delete_failed", extra={"object_key": object_key})
+        await ingest_content(
+            session=session, model=model, content=text,
+            source_identifier=filename, content_type=content_type, source_url="",
+        )
+    # `filename` would clash with LogRecord's built-in attribute, hence `source_filename`.
+    logger.info("r2_file_ingested", extra={"model_id": model_id, "source_filename": filename})
+
+    try:
+        await delete_object(object_key)
+    except Exception:
+        logger.warning("r2_delete_failed", extra={"object_key": object_key})
 
 
 async def handle_crawl_job(job: IngestionJob) -> None:
@@ -275,6 +277,10 @@ async def handle_crawl_job(job: IngestionJob) -> None:
         exclude_patterns=params.get("exclude_patterns"),
     ):
         if isinstance(item, FailedPage):
+            # Only mark an existing row as failed (so the user can see something
+            # that previously worked has broken). Don't create a brand-new row
+            # for first-time fetch failures — those are crawler-side noise
+            # already captured in the worker logs.
             async with db.async_session() as session:
                 existing = await session.execute(
                     select(IngestionSource).where(
@@ -285,13 +291,7 @@ async def handle_crawl_job(job: IngestionJob) -> None:
                 src = existing.scalar_one_or_none()
                 if src:
                     src.status = "failed"
-                else:
-                    session.add(IngestionSource(
-                        model_id=model_id, source_identifier=item.url,
-                        content_hash="", chunk_count=0, source_url=item.url,
-                        content_type="html", status="failed",
-                    ))
-                await session.commit()
+                    await session.commit()
             continue
 
         # CrawledPage — create pending source + child URL job

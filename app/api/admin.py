@@ -70,7 +70,7 @@ async def model_stats(
         total_chunks=chunk_count or 0,
         total_conversations=convo_count or 0,
         total_messages=message_count or 0,
-        unanswered_questions=unanswered or 0,
+        unanswered_messages=unanswered or 0,
         current_month_cost=round(current_cost, 4),
         budget_limit=model.budget_limit,
         budget_remaining=round(model.budget_limit - current_cost, 4),
@@ -170,6 +170,7 @@ async def top_sources(
 @router.get(
     "/models/{slug}/conversations",
     response_model=ConversationListResponse,
+    include_in_schema=False,
 )
 async def list_conversations(
         model: RagModel = Depends(require_model_auth),
@@ -203,6 +204,7 @@ async def list_conversations(
 @router.get(
     "/models/{slug}/conversations/{conversation_id}/messages",
     response_model=ConversationDetailResponse,
+    include_in_schema=False,
 )
 async def get_conversation_messages(
         conversation_id: int,
@@ -235,6 +237,7 @@ async def get_conversation_messages(
 @router.delete(
     "/models/{slug}/conversations/{conversation_id}",
     status_code=204,
+    include_in_schema=False,
 )
 async def delete_conversation(
         conversation_id: int,
@@ -292,6 +295,7 @@ async def get_chunks(
 @router.get(
     "/models/{slug}/system-prompt-history",
     response_model=list[SystemPromptHistoryResponse],
+    include_in_schema=False,
 )
 async def list_system_prompt_history(
         model: RagModel = Depends(require_model_auth),
@@ -309,6 +313,7 @@ async def list_system_prompt_history(
 @router.post(
     "/models/{slug}/system-prompt-history/{history_id}/rollback",
     response_model=SystemPromptHistoryResponse,
+    include_in_schema=False,
 )
 async def rollback_system_prompt(
         history_id: int,
@@ -360,7 +365,7 @@ class GenerateSystemPromptRequest(BaseModel):
     input_text: str = Field("", max_length=5000)
 
 
-@router.post("/models/{slug}/generate-system-prompt")
+@router.post("/models/{slug}/generate-system-prompt", include_in_schema=False)
 async def generate_system_prompt(
         body: GenerateSystemPromptRequest,
         model: RagModel = Depends(require_model_auth),
@@ -408,6 +413,7 @@ class AcceptGeneratedPromptRequest(BaseModel):
 @router.post(
     "/models/{slug}/system-prompt-history/accept-generated",
     response_model=SystemPromptHistoryResponse,
+    include_in_schema=False,
 )
 async def accept_generated_prompt(
         body: AcceptGeneratedPromptRequest,
@@ -443,14 +449,15 @@ Respond with ONLY a JSON array of strings, no explanations:
 
 
 @router.post(
-    "/models/{slug}/generate-sample-questions",
+    "/models/{slug}/generate-sample-messages",
     response_model=list[str],
+    include_in_schema=False,
 )
-async def generate_sample_questions(
+async def generate_sample_messages(
     model: RagModel = Depends(require_model_auth),
     session: AsyncSession = Depends(get_session),
 ):
-    """Generate sample questions based on the model's knowledge base."""
+    """Generate sample prompts based on the model's knowledge base."""
     if not _generation_limiter.is_allowed(f"gen:{model.id}"):
         raise HTTPException(status_code=429, detail="Rate limit exceeded. Please wait before trying again.")
     if not await check_budget(session, model):
@@ -494,9 +501,9 @@ async def generate_sample_questions(
     try:
         parsed = json.loads(raw)
         # Support both {"questions": [...]} and bare [...]
-        questions = parsed if isinstance(parsed, list) else parsed.get("questions", [])
-        return [q for q in questions if isinstance(q, str)][:3]
+        items = parsed if isinstance(parsed, list) else parsed.get("questions", [])
+        return [m for m in items if isinstance(m, str)][:3]
     except (json.JSONDecodeError, IndexError, KeyError):
-        logger.warning("sample_questions_parse_failed", extra={"raw_response": raw[:200]})
+        logger.warning("sample_messages_parse_failed", extra={"raw_response": raw[:200]})
 
-    raise HTTPException(status_code=500, detail="Failed to generate sample questions")
+    raise HTTPException(status_code=500, detail="Failed to generate sample messages")

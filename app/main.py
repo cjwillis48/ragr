@@ -57,16 +57,20 @@ app.add_middleware(RequestIdMiddleware)
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    """Strip raw input from validation errors to prevent input reflection."""
-    return JSONResponse(
-        status_code=422,
-        content={
-            "detail": [
-                {"loc": e.get("loc", []), "msg": e.get("msg", ""), "type": e.get("type", "")}
-                for e in exc.errors()
-            ]
-        },
+    """Strip raw input from validation errors to prevent input reflection.
+
+    Also log a sanitized version (loc + msg + type, no raw input values)
+    so 422s in production are debuggable without leaking user input.
+    """
+    sanitized = [
+        {"loc": e.get("loc", []), "msg": e.get("msg", ""), "type": e.get("type", "")}
+        for e in exc.errors()
+    ]
+    logger.warning(
+        "validation_error",
+        extra={"method": request.method, "path": request.url.path, "errors": sanitized},
     )
+    return JSONResponse(status_code=422, content={"detail": sanitized})
 
 
 @app.exception_handler(Exception)
@@ -77,13 +81,13 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 app.add_middleware(DynamicCORSMiddleware)
 
 
-@app.get("/healthz")
+@app.get("/healthz", include_in_schema=False)
 async def healthz():
     """K8s liveness probe. Always 200 if the process is up."""
     return {"status": "ok"}
 
 
-@app.get("/readyz")
+@app.get("/readyz", include_in_schema=False)
 async def readyz(session: AsyncSession = Depends(get_session)):
     """K8s readiness probe. 200 if the app can reach the database."""
     try:
@@ -102,6 +106,7 @@ from app.api.chat import router as chat_router  # noqa: E402
 from app.api.admin import router as admin_router  # noqa: E402
 from app.api.api_keys import router as api_keys_router  # noqa: E402
 from app.api.sources import router as sources_router  # noqa: E402
+from app.api.users import router as users_router  # noqa: E402
 
 app.include_router(models_router)
 app.include_router(chat_router)
@@ -109,3 +114,4 @@ app.include_router(chat_router)
 app.include_router(admin_router)
 app.include_router(api_keys_router)
 app.include_router(sources_router)
+app.include_router(users_router)

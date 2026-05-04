@@ -185,7 +185,7 @@ def clerk_token_and_user_id(auth_mode):
 
 
 @pytest_asyncio.fixture
-async def auth_headers(app, auth_mode, clerk_token_and_user_id):
+async def auth_headers(app, auth_mode, clerk_token_and_user_id, db_session):
     """Per-test: returns Authorization headers.
 
     In real-Clerk mode: no dependency overrides — the real authenticate_request()
@@ -193,11 +193,16 @@ async def auth_headers(app, auth_mode, clerk_token_and_user_id):
     auth chain end-to-end.
 
     In mock mode: overrides all auth dependencies so tests run without Clerk.
+
+    Also seeds the users row with allow_global_keys=True so the test user can
+    create/update/use models that depend on platform API keys. Tests that need
+    a non-allowlisted user can flip the flag via the `set_test_user_allowlist`
+    fixture.
     """
     token, user_id = clerk_token_and_user_id
 
     if auth_mode == "mock":
-        test_user = ClerkUser(user_id=user_id, email="test@example.com")
+        test_user = ClerkUser(user_id=user_id, email="test@example.com", allow_global_keys=True)
         app.dependency_overrides[get_clerk_user] = lambda: test_user
 
         async def _mock_require_model_auth(
@@ -218,7 +223,38 @@ async def auth_headers(app, auth_mode, clerk_token_and_user_id):
         app.dependency_overrides[require_model_auth] = _mock_require_model_auth
         app.dependency_overrides[require_chat_auth] = _mock_require_chat_auth
 
+    # Seed allowlisted users row for the test user so default model flows pass.
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    from app.models.user import User
+    stmt = pg_insert(User).values(
+        clerk_user_id=user_id,
+        email="test@example.com",
+        first_name="Integration",
+        last_name="Test",
+        allow_global_keys=True,
+    ).on_conflict_do_update(
+        index_elements=["clerk_user_id"],
+        set_={"allow_global_keys": True},
+    )
+    await db_session.execute(stmt)
+    await db_session.commit()
+
     return {"Authorization": f"Bearer {token}"}
+
+
+@pytest_asyncio.fixture
+async def set_test_user_allowlist(db_session, test_user_id):
+    """Helper to flip allow_global_keys for the integration test user mid-test."""
+    from sqlalchemy import update
+    from app.models.user import User
+
+    async def _set(allowed: bool):
+        await db_session.execute(
+            update(User).where(User.clerk_user_id == test_user_id).values(allow_global_keys=allowed)
+        )
+        await db_session.commit()
+
+    return _set
 
 
 @pytest.fixture(scope="session")
@@ -344,7 +380,7 @@ async def cleanup_after_session():
     async with engine.begin() as conn:
         await conn.execute(text(
             "TRUNCATE rag_models, content_chunks, conversations, messages, "
-            "ingestion_sources, model_api_keys, token_usage, system_prompt_history "
-            "CASCADE"
+            "ingestion_sources, model_api_keys, token_usage, system_prompt_history, "
+            "users CASCADE"
         ))
     await engine.dispose()

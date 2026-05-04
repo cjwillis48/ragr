@@ -7,14 +7,14 @@ class ChatMessage(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    question: str = Field(..., min_length=1, max_length=2000)
+    message: str = Field(..., min_length=1, max_length=2000)
     stream: bool = False
     session_id: str | None = Field(None, max_length=64)
     history: list[ChatMessage] = Field(default_factory=list, max_length=20)
 
 
 class ChatResponse(BaseModel):
-    answer: str
+    response: str
     status: str  # "answered" | "unanswered" | "off_topic"
     session_id: str | None = None
     tokens_in: int = 0
