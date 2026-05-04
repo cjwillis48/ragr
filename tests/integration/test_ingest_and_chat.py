@@ -123,12 +123,12 @@ class TestChat:
 
     async def test_chat_non_streaming(self, client, model_slug):
         resp = await client.post(f"/models/{model_slug}/chat", json={
-            "question": "Who created Python?",
+            "message": "Who created Python?",
             "stream": False,
         })
         assert resp.status_code == 200
         data = resp.json()
-        assert "answer" in data
+        assert "response" in data
         assert data["status"] in ("answered", "unanswered", "off_topic")
         assert "session_id" in data
         assert data["tokens_in"] >= 0
@@ -138,7 +138,7 @@ class TestChat:
         session_id = "test-session-123"
 
         resp1 = await client.post(f"/models/{model_slug}/chat", json={
-            "question": "What is Python?",
+            "message": "What is Python?",
             "session_id": session_id,
         })
         assert resp1.status_code == 200
@@ -146,7 +146,7 @@ class TestChat:
 
         # Second message in same session
         resp2 = await client.post(f"/models/{model_slug}/chat", json={
-            "question": "When was it created?",
+            "message": "When was it created?",
             "session_id": session_id,
         })
         assert resp2.status_code == 200
@@ -162,7 +162,7 @@ class TestChat:
 
         resp = await client.post(
             f"/models/{model_slug}/chat",
-            json={"question": "Tell me about Python", "stream": True},
+            json={"message": "Tell me about Python", "stream": True},
         )
         assert resp.status_code == 200
         assert resp.headers.get("content-type", "").startswith("text/event-stream")
@@ -172,7 +172,7 @@ class TestChat:
 
     async def test_chat_returns_cost(self, client, model_slug):
         resp = await client.post(f"/models/{model_slug}/chat", json={
-            "question": "What is Python?",
+            "message": "What is Python?",
         })
         assert resp.status_code == 200
         cost = resp.json().get("cost")
@@ -185,7 +185,7 @@ class TestChat:
         transport = ASGITransport(app=app)
         async with HC(transport=transport, base_url="http://test") as unauth_client:
             resp = await unauth_client.post(f"/models/{model_slug}/chat", json={
-                "question": "Hello",
+                "message": "Hello",
             })
             # Should work because hosted_chat defaults to True
             assert resp.status_code == 200
@@ -202,7 +202,7 @@ class TestStats:
             "content": "Knowledge for stats testing. Python is great.",
         })
         await client.post(f"/models/{model_slug}/chat", json={
-            "question": "What is Python?",
+            "message": "What is Python?",
         })
 
     async def test_model_stats(self, client, model_slug):

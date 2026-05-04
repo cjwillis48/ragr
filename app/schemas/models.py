@@ -22,7 +22,7 @@ class ChatTheme(BaseModel):
     bot_bubble_color: str | None = Field(None, pattern=_HEX_COLOR, max_length=9)
     font_family: str | None = Field(None, max_length=100, pattern=r"^[a-zA-Z0-9 ,'\"-]+$")
     border_radius: int | None = Field(None, ge=0, le=50)
-    show_sample_questions_in_greeting: bool | None = None
+    show_sample_messages_in_greeting: bool | None = None
 
     @field_validator("primary_color", "bg_color", "text_color", "user_bubble_color", "bot_bubble_color", mode="before")
     @classmethod
@@ -95,7 +95,7 @@ class _RagModelFields(BaseModel):
     rerank_candidates: int | None = Field(None, ge=1, le=500)
     rerank_threshold: float | None = Field(None, ge=0.0, le=1.0)
     keyword_search_enabled: bool | None = None
-    sample_questions: list[str] | None = Field(None, max_length=10)
+    sample_messages: list[str] | None = Field(None, max_length=10)
     history_turns: int | None = Field(None, ge=0, le=50)
     max_tokens: int | None = Field(None, ge=1, le=8192)
     hosted_chat: bool | None = None
@@ -104,13 +104,13 @@ class _RagModelFields(BaseModel):
     custom_anthropic_key: str | None = None
     custom_voyage_key: str | None = None
 
-    @field_validator("sample_questions")
+    @field_validator("sample_messages")
     @classmethod
-    def validate_sample_question_length(cls, v: list[str] | None) -> list[str] | None:
+    def validate_sample_message_length(cls, v: list[str] | None) -> list[str] | None:
         if v is not None:
-            for q in v:
-                if len(q) > 500:
-                    raise ValueError("Each sample question must be 500 characters or fewer")
+            for m in v:
+                if len(m) > 500:
+                    raise ValueError("Each sample message must be 500 characters or fewer")
         return v
 
     @model_validator(mode="after")
@@ -140,7 +140,7 @@ class RagModelPublic(BaseModel):
     description: str
     chat_theme: ChatTheme | None = None
     hosted_chat: bool
-    sample_questions: list[str] = []
+    sample_messages: list[str] = []
     allowed_origins: list[str] = []
     accepting_requests: bool = True
 
@@ -165,7 +165,7 @@ class RagModelRead(BaseModel):
     rerank_candidates: int
     rerank_threshold: float
     keyword_search_enabled: bool
-    sample_questions: list[str]
+    sample_messages: list[str]
     history_turns: int
     max_tokens: int
     hosted_chat: bool

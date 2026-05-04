@@ -8,7 +8,7 @@ class StatsResponse(BaseModel):
     total_chunks: int
     total_conversations: int
     total_messages: int
-    unanswered_questions: int
+    unanswered_messages: int
     current_month_cost: float
     budget_limit: float
     budget_remaining: float
@@ -23,8 +23,8 @@ class PurgeResponse(BaseModel):
 
 class MessageResponse(BaseModel):
     id: int
-    question: str
-    answer: str
+    message: str
+    response: str
     status: str
     tokens_in: int
     tokens_out: int

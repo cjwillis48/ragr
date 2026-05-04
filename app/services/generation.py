@@ -17,7 +17,7 @@ _ANTHROPIC_TIMEOUT=60.0
 
 @dataclass
 class GenerationResult:
-    answer: str
+    response: str
     status: str  # "answered" | "unanswered" | "off_topic"
     input_tokens: int
     output_tokens: int
@@ -43,7 +43,7 @@ def get_client(api_key: str | None = None) -> anthropic.AsyncAnthropic:
 
 def _build_prompt(
     model: RagModel,
-    question: str,
+    message: str,
     chunks: list[ContentChunk],
     history: list[dict] | None = None,
 ) -> tuple[list[dict], list[dict]]:
@@ -79,11 +79,11 @@ def _build_prompt(
     system = [{"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}}]
 
     # Strip internal tags from user input to prevent prompt injection
-    sanitized_question = re.sub(r"</?knowledge[^>]*>|<meta\s[^>]*/?>", "", question)
+    sanitized_message = re.sub(r"</?knowledge[^>]*>|<meta\s[^>]*/?>", "", message)
 
     user_message = (
         f"<knowledge>\n{context}\n</knowledge>\n\n"
-        f"{sanitized_question}"
+        f"{sanitized_message}"
     )
 
     messages = []
@@ -96,7 +96,7 @@ def _build_prompt(
 
 
 def _parse_meta(raw: str) -> tuple[str, str]:
-    """Strip the <meta /> tag and return (clean_answer, status).
+    """Strip the <meta /> tag and return (clean_response, status).
 
     Falls back to 'answered' if the model omits the tag.
     """
@@ -110,33 +110,33 @@ def _parse_meta(raw: str) -> tuple[str, str]:
 
 async def generate_answer(
     model: RagModel,
-    question: str,
+    message: str,
     chunks: list[ContentChunk],
     history: list[dict] | None = None,
 ) -> GenerationResult:
-    """Generate an answer using retrieved context."""
-    system, messages = _build_prompt(model, question, chunks, history=history)
+    """Generate a response using retrieved context."""
+    system, messages = _build_prompt(model, message, chunks, history=history)
 
     client = get_client(model.custom_anthropic_key)
-    response = await client.messages.create(
+    api_response = await client.messages.create(
         model=model.generation_model,
         max_tokens=model.max_tokens,
         system=system,
         messages=messages,
     )
 
-    usage = response.usage
+    usage = api_response.usage
     logger.info("generate", extra={
         "tokens_in": usage.input_tokens, "tokens_out": usage.output_tokens,
         "cache_write": getattr(usage, "cache_creation_input_tokens", 0) or 0,
         "cache_read": getattr(usage, "cache_read_input_tokens", 0) or 0,
     })
 
-    raw = response.content[0].text
-    answer, status = _parse_meta(raw)
+    raw = api_response.content[0].text
+    response_text, status = _parse_meta(raw)
 
     return GenerationResult(
-        answer=answer,
+        response=response_text,
         status=status,
         input_tokens=usage.input_tokens,
         output_tokens=usage.output_tokens,
@@ -145,7 +145,7 @@ async def generate_answer(
 
 async def generate_answer_stream(
     model: RagModel,
-    question: str,
+    message: str,
     chunks: list[ContentChunk],
     history: list[dict] | None = None,
 ) -> AsyncGenerator[str | GenerationResult, None]:
@@ -154,10 +154,10 @@ async def generate_answer_stream(
     Yields str tokens as they arrive. The final yield is a GenerationResult
     for post-stream bookkeeping.
     """
-    system, messages = _build_prompt(model, question, chunks, history=history)
+    system, messages = _build_prompt(model, message, chunks, history=history)
 
     client = get_client(model.custom_anthropic_key)
-    full_answer = ""
+    full_response = ""
     input_tokens = 0
     output_tokens = 0
     t_start = time.perf_counter()
@@ -179,7 +179,7 @@ async def generate_answer_stream(
                 if t_first_token is None:
                     t_first_token = time.perf_counter()
                     logger.info("first_token", extra={"duration_ms": round((t_first_token - t_start) * 1000)})
-                full_answer += text
+                full_response += text
                 buffer += text
 
                 # Find where a potential <meta tag could start — look for '<'
@@ -209,8 +209,8 @@ async def generate_answer_stream(
                 yield buffer
 
             try:
-                response = await stream.get_final_message()
-                usage = response.usage
+                final = await stream.get_final_message()
+                usage = final.usage
                 input_tokens = usage.input_tokens
                 output_tokens = usage.output_tokens
                 logger.info("stream_done", extra={
@@ -226,9 +226,9 @@ async def generate_answer_stream(
         # Let errors propagate so callers (_stream_response) can send proper SSE error events
         raise
 
-    answer, status = _parse_meta(full_answer)
+    response_text, status = _parse_meta(full_response)
     yield GenerationResult(
-        answer=answer,
+        response=response_text,
         status=status,
         input_tokens=input_tokens,
         output_tokens=output_tokens,

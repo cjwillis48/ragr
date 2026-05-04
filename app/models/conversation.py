@@ -41,8 +41,8 @@ class Message(Base):
     model_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("rag_models.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    question: Mapped[str] = mapped_column(Text, nullable=False)
-    answer: Mapped[str] = mapped_column(Text, nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    response: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(20), default="answered")
     tokens_in: Mapped[int] = mapped_column(Integer, default=0)
     tokens_out: Mapped[int] = mapped_column(Integer, default=0)

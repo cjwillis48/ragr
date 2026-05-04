@@ -81,7 +81,7 @@ class TestChatGate:
         assert resp.status_code == 201
 
         await set_test_user_allowlist(False)
-        resp = await client.post("/models/will-block/chat", json={"question": "hello"})
+        resp = await client.post("/models/will-block/chat", json={"message": "hello"})
         assert resp.status_code == 403
         assert "platform" in resp.json()["detail"].lower()
 
@@ -91,7 +91,7 @@ class TestChatGate:
 
         # We only care that the allowlist gate doesn't fire — full chat plumbing
         # is covered by tests/integration/test_ingest_and_chat.py.
-        resp = await client.post("/models/chat-ok/chat", json={"question": "hi", "stream": False})
+        resp = await client.post("/models/chat-ok/chat", json={"message": "hi", "stream": False})
         assert resp.status_code != 403
 
     async def test_chat_allowed_with_byok_even_when_not_allowlisted(self, client, set_test_user_allowlist):
@@ -104,7 +104,7 @@ class TestChatGate:
         assert resp.status_code == 201
 
         await set_test_user_allowlist(False)
-        resp = await client.post("/models/byok-chat/chat", json={"question": "hi", "stream": False})
+        resp = await client.post("/models/byok-chat/chat", json={"message": "hi", "stream": False})
         assert resp.status_code != 403
 
 

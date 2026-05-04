@@ -57,16 +57,20 @@ app.add_middleware(RequestIdMiddleware)
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    """Strip raw input from validation errors to prevent input reflection."""
-    return JSONResponse(
-        status_code=422,
-        content={
-            "detail": [
-                {"loc": e.get("loc", []), "msg": e.get("msg", ""), "type": e.get("type", "")}
-                for e in exc.errors()
-            ]
-        },
+    """Strip raw input from validation errors to prevent input reflection.
+
+    Also log a sanitized version (loc + msg + type, no raw input values)
+    so 422s in production are debuggable without leaking user input.
+    """
+    sanitized = [
+        {"loc": e.get("loc", []), "msg": e.get("msg", ""), "type": e.get("type", "")}
+        for e in exc.errors()
+    ]
+    logger.warning(
+        "validation_error",
+        extra={"method": request.method, "path": request.url.path, "errors": sanitized},
     )
+    return JSONResponse(status_code=422, content={"detail": sanitized})
 
 
 @app.exception_handler(Exception)

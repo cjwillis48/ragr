@@ -70,7 +70,7 @@ async def model_stats(
         total_chunks=chunk_count or 0,
         total_conversations=convo_count or 0,
         total_messages=message_count or 0,
-        unanswered_questions=unanswered or 0,
+        unanswered_messages=unanswered or 0,
         current_month_cost=round(current_cost, 4),
         budget_limit=model.budget_limit,
         budget_remaining=round(model.budget_limit - current_cost, 4),
@@ -449,15 +449,15 @@ Respond with ONLY a JSON array of strings, no explanations:
 
 
 @router.post(
-    "/models/{slug}/generate-sample-questions",
+    "/models/{slug}/generate-sample-messages",
     response_model=list[str],
     include_in_schema=False,
 )
-async def generate_sample_questions(
+async def generate_sample_messages(
     model: RagModel = Depends(require_model_auth),
     session: AsyncSession = Depends(get_session),
 ):
-    """Generate sample questions based on the model's knowledge base."""
+    """Generate sample prompts based on the model's knowledge base."""
     if not _generation_limiter.is_allowed(f"gen:{model.id}"):
         raise HTTPException(status_code=429, detail="Rate limit exceeded. Please wait before trying again.")
     if not await check_budget(session, model):
@@ -501,9 +501,9 @@ async def generate_sample_questions(
     try:
         parsed = json.loads(raw)
         # Support both {"questions": [...]} and bare [...]
-        questions = parsed if isinstance(parsed, list) else parsed.get("questions", [])
-        return [q for q in questions if isinstance(q, str)][:3]
+        items = parsed if isinstance(parsed, list) else parsed.get("questions", [])
+        return [m for m in items if isinstance(m, str)][:3]
     except (json.JSONDecodeError, IndexError, KeyError):
-        logger.warning("sample_questions_parse_failed", extra={"raw_response": raw[:200]})
+        logger.warning("sample_messages_parse_failed", extra={"raw_response": raw[:200]})
 
-    raise HTTPException(status_code=500, detail="Failed to generate sample questions")
+    raise HTTPException(status_code=500, detail="Failed to generate sample messages")

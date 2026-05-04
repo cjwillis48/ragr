@@ -72,16 +72,16 @@ async def _load_session_history(
     # Reverse to chronological order and flatten to message pairs
     history = []
     for row in reversed(rows):
-        history.append({"role": "user", "content": row.question})
-        history.append({"role": "assistant", "content": row.answer})
+        history.append({"role": "user", "content": row.message})
+        history.append({"role": "assistant", "content": row.response})
     return history
 
 
 async def _log_message(
     session: AsyncSession,
     model: RagModel,
-    question: str,
-    answer: str,
+    message: str,
+    response: str,
     status: str,
     tokens_in: int,
     tokens_out: int,
@@ -110,7 +110,7 @@ async def _log_message(
         conversation = Conversation(
             model_id=model.id,
             session_id=effective_session_id,
-            title=question[:80],
+            title=message[:80],
             message_count=0,
         )
         session.add(conversation)
@@ -125,8 +125,8 @@ async def _log_message(
     session.add(Message(
         conversation_id=conversation.id,
         model_id=model.id,
-        question=question,
-        answer=answer,
+        message=message,
+        response=response,
         status=status,
         tokens_in=tokens_in,
         tokens_out=tokens_out,
@@ -159,7 +159,7 @@ async def chat(
 
     t_req = time.perf_counter()
     try:
-        retrieval = await retrieve_with_threshold(session, model, body.question)
+        retrieval = await retrieve_with_threshold(session, model, body.message)
     except httpx.TimeoutException:
         logger.error("embedding_timeout")
         raise HTTPException(status_code=503, detail="Embedding service timed out. Please try again.")
@@ -180,22 +180,22 @@ async def chat(
 
     if body.stream:
         return StreamingResponse(
-            _stream_response(model, body.question, retrieval.chunks, history, session_id, rerank_cost, retrieval.scores),
+            _stream_response(model, body.message, retrieval.chunks, history, session_id, rerank_cost, retrieval.scores),
             media_type="text/event-stream",
         )
 
     try:
-        result = await generate_answer(model, body.question, retrieval.chunks, history=history)
+        result = await generate_answer(model, body.message, retrieval.chunks, history=history)
     except anthropic.APIStatusError as e:
         if e.status_code == 529:
             raise HTTPException(status_code=503, detail="AI provider is temporarily overloaded. Please try again.")
         raise
-    await _log_message(session, model, body.question, result.answer, result.status, result.input_tokens, result.output_tokens, session_id, retrieval.scores)
+    await _log_message(session, model, body.message, result.response, result.status, result.input_tokens, result.output_tokens, session_id, retrieval.scores)
 
     generation_cost = estimate_cost(model.generation_model, result.input_tokens, result.output_tokens)
 
     return ChatResponse(
-        answer=result.answer,
+        response=result.response,
         status=result.status,
         session_id=session_id,
         tokens_in=result.input_tokens,
@@ -206,7 +206,7 @@ async def chat(
 
 async def _stream_response(
     model: RagModel,
-    question: str,
+    message: str,
     chunks: list,
     history: list[dict] | None = None,
     session_id: str | None = None,
@@ -220,12 +220,12 @@ async def _stream_response(
     """
     try:
         async with db.async_session() as stream_session:
-            async for event in generate_answer_stream(model, question, chunks, history=history):
+            async for event in generate_answer_stream(model, message, chunks, history=history):
                 if isinstance(event, GenerationResult):
-                    await _log_message(stream_session, model, question, event.answer, event.status, event.input_tokens, event.output_tokens, session_id, scores)
+                    await _log_message(stream_session, model, message, event.response, event.status, event.input_tokens, event.output_tokens, session_id, scores)
                     generation_cost = estimate_cost(model.generation_model, event.input_tokens, event.output_tokens)
                     data = json.dumps({
-                        "answer": event.answer,
+                        "response": event.response,
                         "status": event.status,
                         "session_id": session_id,
                         "tokens_in": event.input_tokens,
@@ -242,7 +242,7 @@ async def _stream_response(
             error = json.dumps({"error": f"AI provider error ({e.status_code}). Please try again."})
         yield f"event: error\ndata: {error}\n\n"
     except asyncio.CancelledError:
-        logger.warning("stream_cancelled", extra={"question": question[:80], "session_id": session_id})
+        logger.warning("stream_cancelled", extra={"user_message": message[:80], "session_id": session_id})
         raise
     except Exception:
         logger.exception("stream_error")

@@ -54,7 +54,7 @@ class TestPlatformCap:
         model = await _get_model(db_session, "capped-bot")
         await _seed_usage(db_session, model.id, cost=10.01)
 
-        resp = await client.post("/models/capped-bot/chat", json={"question": "hi", "stream": False})
+        resp = await client.post("/models/capped-bot/chat", json={"message": "hi", "stream": False})
         assert resp.status_code == 429
         assert "budget" in resp.json()["detail"].lower()
 
@@ -68,7 +68,7 @@ class TestPlatformCap:
         model = await _get_model(db_session, "greedy-bot")
         await _seed_usage(db_session, model.id, cost=10.01)
 
-        resp = await client.post("/models/greedy-bot/chat", json={"question": "hi", "stream": False})
+        resp = await client.post("/models/greedy-bot/chat", json={"message": "hi", "stream": False})
         assert resp.status_code == 429
 
     async def test_chat_allowed_just_under_platform_cap(self, client, db_session):
@@ -76,7 +76,7 @@ class TestPlatformCap:
         model = await _get_model(db_session, "just-under")
         await _seed_usage(db_session, model.id, cost=9.99)
 
-        resp = await client.post("/models/just-under/chat", json={"question": "hi", "stream": False})
+        resp = await client.post("/models/just-under/chat", json={"message": "hi", "stream": False})
         # Anything other than 429 means the budget gate let it through.
         assert resp.status_code != 429
 
@@ -99,7 +99,7 @@ class TestByokBudget:
         model = await _get_model(db_session, "byok-big")
         await _seed_usage(db_session, model.id, cost=50.0)
 
-        resp = await client.post("/models/byok-big/chat", json={"question": "hi", "stream": False})
+        resp = await client.post("/models/byok-big/chat", json={"message": "hi", "stream": False})
         # $50 usage on a $100 BYOK budget → not blocked by budget gate.
         assert resp.status_code != 429
 
@@ -114,7 +114,7 @@ class TestByokBudget:
         model = await _get_model(db_session, "byok-small")
         await _seed_usage(db_session, model.id, cost=5.01)
 
-        resp = await client.post("/models/byok-small/chat", json={"question": "hi", "stream": False})
+        resp = await client.post("/models/byok-small/chat", json={"message": "hi", "stream": False})
         assert resp.status_code == 429
 
 
@@ -137,7 +137,7 @@ class TestUsageAccumulation:
         )
         assert result.scalar_one_or_none() is None
 
-        resp = await client.post("/models/accum-bot/chat", json={"question": "hi", "stream": False})
+        resp = await client.post("/models/accum-bot/chat", json={"message": "hi", "stream": False})
         assert resp.status_code == 200
 
         # Usage row exists with the mocked 100 in / 50 out tokens
@@ -153,7 +153,7 @@ class TestUsageAccumulation:
         assert usage.estimated_cost > 0
 
         # Second call — same row, accumulated counts
-        resp2 = await client.post("/models/accum-bot/chat", json={"question": "again", "stream": False})
+        resp2 = await client.post("/models/accum-bot/chat", json={"message": "again", "stream": False})
         assert resp2.status_code == 200
 
         await db_session.refresh(usage)
