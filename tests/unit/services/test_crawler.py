@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from app.services.crawler import _normalize_url, crawl_site, CrawledPage, FailedPage
+from app.services.crawler import normalize_url, crawl_site, CrawledPage, FailedPage
 from app.services.html import parse_html
 
 
@@ -18,19 +18,19 @@ async def _collect(gen):
 
 class TestNormalizeUrl:
     def test_strips_fragment(self):
-        assert _normalize_url("https://example.com/page#section") == "https://example.com/page"
+        assert normalize_url("https://example.com/page#section") == "https://example.com/page"
 
     def test_strips_trailing_slash(self):
-        assert _normalize_url("https://example.com/page/") == "https://example.com/page"
+        assert normalize_url("https://example.com/page/") == "https://example.com/page"
 
     def test_root_keeps_slash(self):
-        assert _normalize_url("https://example.com/") == "https://example.com/"
+        assert normalize_url("https://example.com/") == "https://example.com/"
 
     def test_no_fragment_no_trailing_slash(self):
-        assert _normalize_url("https://example.com/page") == "https://example.com/page"
+        assert normalize_url("https://example.com/page") == "https://example.com/page"
 
     def test_preserves_scheme_and_netloc(self):
-        assert _normalize_url("http://sub.example.com:8080/path") == "http://sub.example.com:8080/path"
+        assert normalize_url("http://sub.example.com:8080/path") == "http://sub.example.com:8080/path"
 
 
 class TestParseHtmlLinks:

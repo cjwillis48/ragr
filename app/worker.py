@@ -195,7 +195,7 @@ async def handle_file_job(job: IngestionJob) -> None:
         ingest_result = await ingest_content(
             session=session, model=model, content=src.raw_content,
             source_identifier=source_identifier, content_type=content_type,
-            source_url="",
+            source_url=src.source_url or "",
         )
         if ingest_result.skipped:
             logger.info("file_skipped", extra={"model_id": model_id, "source": source_identifier})
@@ -277,6 +277,10 @@ async def handle_crawl_job(job: IngestionJob) -> None:
         exclude_patterns=params.get("exclude_patterns"),
     ):
         if isinstance(item, FailedPage):
+            # Only mark an existing row as failed (so the user can see something
+            # that previously worked has broken). Don't create a brand-new row
+            # for first-time fetch failures — those are crawler-side noise
+            # already captured in the worker logs.
             async with db.async_session() as session:
                 existing = await session.execute(
                     select(IngestionSource).where(
@@ -287,13 +291,7 @@ async def handle_crawl_job(job: IngestionJob) -> None:
                 src = existing.scalar_one_or_none()
                 if src:
                     src.status = "failed"
-                else:
-                    session.add(IngestionSource(
-                        model_id=model_id, source_identifier=item.url,
-                        content_hash="", chunk_count=0, source_url=item.url,
-                        content_type="html", status="failed",
-                    ))
-                await session.commit()
+                    await session.commit()
             continue
 
         # CrawledPage — create pending source + child URL job

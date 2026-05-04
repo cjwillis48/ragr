@@ -30,6 +30,7 @@ from app.schemas.sources import (
     SourceListResponse,
     SourceResponse,
 )
+from app.services.crawler import normalize_url
 from app.services.html import strip_html
 from app.services.ingest import ingest_content
 from app.services.r2 import is_configured as r2_is_configured
@@ -560,11 +561,16 @@ async def crawl_site_endpoint(
         except SSRFError as e:
             raise HTTPException(status_code=422, detail=str(e))
 
+    # Use the crawler's canonical form so the initial "crawling" row matches
+    # the source_identifier the crawler will produce for the same page.
+    # Otherwise `https://x.com` and `https://x.com/` create two rows.
+    crawl_root = normalize_url(body.url)
+
     # Create a crawling source immediately so the UI shows activity
     existing = await session.execute(
         select(IngestionSource).where(
             IngestionSource.model_id == model.id,
-            IngestionSource.source_identifier == body.url,
+            IngestionSource.source_identifier == crawl_root,
         )
     )
     src = existing.scalar_one_or_none()
@@ -573,10 +579,10 @@ async def crawl_site_endpoint(
     else:
         session.add(IngestionSource(
             model_id=model.id,
-            source_identifier=body.url,
+            source_identifier=crawl_root,
             content_hash="",
             chunk_count=0,
-            source_url=body.url,
+            source_url=crawl_root,
             content_type="html",
             status="crawling",
         ))
@@ -584,7 +590,7 @@ async def crawl_site_endpoint(
         model_id=model.id,
         job_type="crawl",
         job_params={
-            "url": body.url,
+            "url": crawl_root,
             "max_pages": body.max_pages,
             "max_depth": body.max_depth,
             "prefix": body.prefix,
