@@ -421,7 +421,7 @@ async def upload_source(
                 source_identifier=filename,
                 content_hash="",
                 chunk_count=0,
-                source_url=filename,
+                source_url="",
                 content_type=content_type,
                 status="pending",
                 raw_content=text,
@@ -520,7 +520,7 @@ async def confirm_upload(
                 source_identifier=f.filename,
                 content_hash="",
                 chunk_count=0,
-                source_url=f.filename,
+                source_url="",
                 content_type="pending",
                 status="pending",
             ))

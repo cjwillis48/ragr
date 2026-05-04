@@ -61,6 +61,21 @@ class TestTextIngestion:
         assert resp2.status_code == 200
         assert resp2.json()[0]["skipped"] is True
 
+    async def test_text_source_without_url_has_empty_source_url(self, client, model_slug):
+        """Sources without an explicit URL (file/text uploads) must have source_url=''.
+
+        Regression guard against a previous bug where the filename/identifier
+        was leaking into source_url, breaking the "is this an http link?"
+        contract that the console renders against.
+        """
+        await client.post(f"/models/{model_slug}/sources", json={
+            "source_identifier": "no-url-source",
+            "content": "Content with no URL provided.",
+        })
+        resp = await client.get(f"/models/{model_slug}/sources")
+        source = next(s for s in resp.json()["sources"] if s["source_identifier"] == "no-url-source")
+        assert source["source_url"] == ""
+
     async def test_list_sources(self, client, model_slug):
         # Ingest something first
         await client.post(f"/models/{model_slug}/sources", json={

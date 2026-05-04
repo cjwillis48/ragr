@@ -195,7 +195,7 @@ async def handle_file_job(job: IngestionJob) -> None:
         ingest_result = await ingest_content(
             session=session, model=model, content=src.raw_content,
             source_identifier=source_identifier, content_type=content_type,
-            source_url=source_identifier,
+            source_url="",
         )
         if ingest_result.skipped:
             logger.info("file_skipped", extra={"model_id": model_id, "source": source_identifier})
@@ -250,7 +250,7 @@ async def handle_r2_file_job(job: IngestionJob) -> None:
 
         await ingest_content(
             session=session, model=model, content=text,
-            source_identifier=filename, content_type=content_type, source_url=filename,
+            source_identifier=filename, content_type=content_type, source_url="",
         )
     # `filename` would clash with LogRecord's built-in attribute, hence `source_filename`.
     logger.info("r2_file_ingested", extra={"model_id": model_id, "source_filename": filename})
