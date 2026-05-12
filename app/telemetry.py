@@ -38,4 +38,4 @@ def instrument_fastapi(app) -> None:
         return
     from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor  # lazy: avoid import cost when tracing is off
 
-    FastAPIInstrumentor.instrument_app(app)
+    FastAPIInstrumentor.instrument_app(app, excluded_urls="healthz,readyz")
