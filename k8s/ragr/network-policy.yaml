@@ -92,3 +92,23 @@ spec:
     - ports:
         - protocol: TCP
           port: 443
+---
+# Allow ragr to reach OTel Collector DaemonSet on host network
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ragr-otel
+  namespace: ragr
+spec:
+  podSelector:
+    matchLabels:
+      app: ragr
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 192.168.6.0/24
+      ports:
+        - protocol: TCP
+          port: 4317
