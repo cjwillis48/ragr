@@ -11,6 +11,7 @@ from app.config import settings
 from app.models.content import ContentChunk
 from app.models.rag_model import RagModel
 from app.services.client_cache import ClientCache
+from app.telemetry import tracer
 
 _ANTHROPIC_MAX_RETRIES=4
 _ANTHROPIC_TIMEOUT=60.0
@@ -118,19 +119,27 @@ async def generate_answer(
     system, messages = _build_prompt(model, message, chunks, history=history)
 
     client = get_client(model.custom_anthropic_key)
-    api_response = await client.messages.create(
-        model=model.generation_model,
-        max_tokens=model.max_tokens,
-        system=system,
-        messages=messages,
-    )
+    with tracer.start_as_current_span(
+        "anthropic.messages.create",
+        attributes={"anthropic.model": model.generation_model},
+    ) as span:
+        api_response = await client.messages.create(
+            model=model.generation_model,
+            max_tokens=model.max_tokens,
+            system=system,
+            messages=messages,
+        )
 
-    usage = api_response.usage
-    logger.info("generate", extra={
-        "tokens_in": usage.input_tokens, "tokens_out": usage.output_tokens,
-        "cache_write": getattr(usage, "cache_creation_input_tokens", 0) or 0,
-        "cache_read": getattr(usage, "cache_read_input_tokens", 0) or 0,
-    })
+        usage = api_response.usage
+        span.set_attribute("anthropic.input_tokens", usage.input_tokens)
+        span.set_attribute("anthropic.output_tokens", usage.output_tokens)
+        span.set_attribute("anthropic.cache_creation_input_tokens", getattr(usage, "cache_creation_input_tokens", 0) or 0)
+        span.set_attribute("anthropic.cache_read_input_tokens", getattr(usage, "cache_read_input_tokens", 0) or 0)
+        logger.info("generate", extra={
+            "tokens_in": usage.input_tokens, "tokens_out": usage.output_tokens,
+            "cache_write": getattr(usage, "cache_creation_input_tokens", 0) or 0,
+            "cache_read": getattr(usage, "cache_read_input_tokens", 0) or 0,
+        })
 
     raw = api_response.content[0].text
     response_text, status = _parse_meta(raw)
@@ -169,59 +178,67 @@ async def generate_answer_stream(
     meta_prefix = "<meta"
 
     try:
-        async with client.messages.stream(
-            model=model.generation_model,
-            max_tokens=model.max_tokens,
-            system=system,
-            messages=messages,
-        ) as stream:
-            async for text in stream.text_stream:
-                if t_first_token is None:
-                    t_first_token = time.perf_counter()
-                    logger.info("first_token", extra={"duration_ms": round((t_first_token - t_start) * 1000)})
-                full_response += text
-                buffer += text
+        with tracer.start_as_current_span(
+            "anthropic.messages.stream",
+            attributes={"anthropic.model": model.generation_model},
+        ) as span:
+            async with client.messages.stream(
+                model=model.generation_model,
+                max_tokens=model.max_tokens,
+                system=system,
+                messages=messages,
+            ) as stream:
+                async for text in stream.text_stream:
+                    if t_first_token is None:
+                        t_first_token = time.perf_counter()
+                        logger.info("first_token", extra={"duration_ms": round((t_first_token - t_start) * 1000)})
+                    full_response += text
+                    buffer += text
 
-                # Find where a potential <meta tag could start — look for '<'
-                # that could be the beginning of '<meta status=...'
-                tag_start = buffer.find("<")
-                if tag_start == -1:
-                    # No '<' at all — safe to flush everything
-                    yield buffer
-                    buffer = ""
-                else:
-                    # Flush everything before the '<'
-                    if tag_start > 0:
-                        yield buffer[:tag_start]
-                        buffer = buffer[tag_start:]
-
-                    # Check if buffer so far could still be a prefix of <meta
-                    if meta_prefix.startswith(buffer) or buffer.startswith(meta_prefix):
-                        # Still ambiguous — keep buffering
-                        pass
-                    else:
-                        # It's not <meta, flush it
+                    # Find where a potential <meta tag could start — look for '<'
+                    # that could be the beginning of '<meta status=...'
+                    tag_start = buffer.find("<")
+                    if tag_start == -1:
+                        # No '<' at all — safe to flush everything
                         yield buffer
                         buffer = ""
+                    else:
+                        # Flush everything before the '<'
+                        if tag_start > 0:
+                            yield buffer[:tag_start]
+                            buffer = buffer[tag_start:]
 
-            # Stream done — flush anything buffered that isn't the meta tag
-            if buffer and not _META_RE.search(buffer):
-                yield buffer
+                        # Check if buffer so far could still be a prefix of <meta
+                        if meta_prefix.startswith(buffer) or buffer.startswith(meta_prefix):
+                            # Still ambiguous — keep buffering
+                            pass
+                        else:
+                            # It's not <meta, flush it
+                            yield buffer
+                            buffer = ""
 
-            try:
-                final = await stream.get_final_message()
-                usage = final.usage
-                input_tokens = usage.input_tokens
-                output_tokens = usage.output_tokens
-                logger.info("stream_done", extra={
-                    "duration_ms": round((time.perf_counter() - t_start) * 1000),
-                    "tokens_in": input_tokens, "tokens_out": output_tokens,
-                    "cache_write": getattr(usage, "cache_creation_input_tokens", 0) or 0,
-                    "cache_read": getattr(usage, "cache_read_input_tokens", 0) or 0,
-                })
-            except Exception:
-                logger.warning("get_final_message_failed")
-                logger.info("stream_done", extra={"duration_ms": round((time.perf_counter() - t_start) * 1000), "tokens_available": False})
+                # Stream done — flush anything buffered that isn't the meta tag
+                if buffer and not _META_RE.search(buffer):
+                    yield buffer
+
+                try:
+                    final = await stream.get_final_message()
+                    usage = final.usage
+                    input_tokens = usage.input_tokens
+                    output_tokens = usage.output_tokens
+                    span.set_attribute("anthropic.input_tokens", input_tokens)
+                    span.set_attribute("anthropic.output_tokens", output_tokens)
+                    span.set_attribute("anthropic.cache_creation_input_tokens", getattr(usage, "cache_creation_input_tokens", 0) or 0)
+                    span.set_attribute("anthropic.cache_read_input_tokens", getattr(usage, "cache_read_input_tokens", 0) or 0)
+                    logger.info("stream_done", extra={
+                        "duration_ms": round((time.perf_counter() - t_start) * 1000),
+                        "tokens_in": input_tokens, "tokens_out": output_tokens,
+                        "cache_write": getattr(usage, "cache_creation_input_tokens", 0) or 0,
+                        "cache_read": getattr(usage, "cache_read_input_tokens", 0) or 0,
+                    })
+                except Exception:
+                    logger.warning("get_final_message_failed")
+                    logger.info("stream_done", extra={"duration_ms": round((time.perf_counter() - t_start) * 1000), "tokens_available": False})
     except (anthropic.APIStatusError, anthropic.APIConnectionError, httpx.TimeoutException, httpx.ConnectError, httpx.RemoteProtocolError):
         # Let errors propagate so callers (_stream_response) can send proper SSE error events
         raise

@@ -9,6 +9,7 @@ from app.models.content import ContentChunk
 from app.models.rag_model import RagModel
 from app.services.embedder import embed_query
 from app.services.reranker import rerank
+from app.telemetry import tracer
 
 logger = logging.getLogger("ragr.retrieval")
 
@@ -61,8 +62,14 @@ async def _vector_search(
         .order_by(distance_col)
         .limit(limit)
     )
-    result = await session.execute(stmt)
-    return [(chunk, score) for chunk, score in result.all()]
+    with tracer.start_as_current_span(
+        "retrieval.vector_search",
+        attributes={"db.system": "postgresql", "retrieval.candidate_limit": limit},
+    ) as span:
+        result = await session.execute(stmt)
+        rows = [(chunk, score) for chunk, score in result.all()]
+        span.set_attribute("retrieval.results_count", len(rows))
+        return rows
 
 
 async def _keyword_search(
@@ -83,8 +90,14 @@ async def _keyword_search(
         .order_by(rank.desc())
         .limit(limit)
     )
-    result = await session.execute(stmt)
-    return [(chunk, score) for chunk, score in result.all()]
+    with tracer.start_as_current_span(
+        "retrieval.keyword_search",
+        attributes={"db.system": "postgresql", "retrieval.candidate_limit": limit},
+    ) as span:
+        result = await session.execute(stmt)
+        rows = [(chunk, score) for chunk, score in result.all()]
+        span.set_attribute("retrieval.results_count", len(rows))
+        return rows
 
 
 def _rrf_merge(

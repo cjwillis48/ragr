@@ -22,6 +22,7 @@ from app.models.rag_model import RagModel
 from app.services.html import strip_html
 from app.logging_setup import configure_logging
 from app.services.ingest import ingest_content
+from app.telemetry import setup_tracing, tracer
 import app.services.wikipedia as wikipedia_module
 
 configure_logging()
@@ -363,18 +364,22 @@ async def process_job(job: IngestionJob) -> None:
     if parent_job_id:
         job_extra["parent_job_id"] = parent_job_id
 
-    try:
-        await handler(job)
-        await mark_complete(job.id)
-        logger.info("job_complete", extra=job_extra)
-    except Exception as e:
-        logger.exception("job_failed", extra=job_extra)
-        await mark_failed(job.id, str(e), job.attempts, job.max_attempts)
-        # Mark the source as failed if all retries are exhausted
-        if job.attempts >= job.max_attempts:
-            source_id = job.job_params.get("source_identifier") or job.job_params.get("filename") or job.job_params.get("url")
-            if source_id:
-                await _mark_source_failed(job.model_id, source_id)
+    with tracer.start_as_current_span(
+        "worker.job",
+        attributes={"job.id": job.id, "job.type": job.job_type, "model.id": job.model_id},
+    ):
+        try:
+            await handler(job)
+            await mark_complete(job.id)
+            logger.info("job_complete", extra=job_extra)
+        except Exception as e:
+            logger.exception("job_failed", extra=job_extra)
+            await mark_failed(job.id, str(e), job.attempts, job.max_attempts)
+            # Mark the source as failed if all retries are exhausted
+            if job.attempts >= job.max_attempts:
+                source_id = job.job_params.get("source_identifier") or job.job_params.get("filename") or job.job_params.get("url")
+                if source_id:
+                    await _mark_source_failed(job.model_id, source_id)
 
 
 # ---------------------------------------------------------------------------
@@ -384,6 +389,7 @@ async def process_job(job: IngestionJob) -> None:
 
 async def main() -> None:
     _init_engine()
+    setup_tracing("ragr-worker")
     logger.info("worker_starting", extra={"concurrency": settings.worker_concurrency})
 
     shutdown_event = asyncio.Event()

@@ -50,8 +50,12 @@ async def lifespan(_: FastAPI):
 
 
 from app import __version__
+from app.telemetry import instrument_fastapi, setup_tracing
+
+setup_tracing("ragr-api")
 
 app = FastAPI(title="RAGr", version=__version__, lifespan=lifespan)
+instrument_fastapi(app)
 
 app.add_middleware(RequestIdMiddleware)
 

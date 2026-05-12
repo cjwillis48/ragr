@@ -88,6 +88,12 @@ spec:
                   key: R2_SECRET_ACCESS_KEY
             - name: WORKER_CONCURRENCY
               value: "5"
+            - name: HOST_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://$(HOST_IP):4317"
           resources:
             requests:
               memory: 256Mi
