@@ -8,6 +8,7 @@ import anthropic
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
+from opentelemetry import trace
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -156,6 +157,13 @@ async def chat(
 
     # Resolve session ID
     session_id = body.session_id or str(uuid.uuid4())
+
+    span = trace.get_current_span()
+    span.set_attribute("chat.model.slug", model.slug)
+    span.set_attribute("chat.model.id", model.id)
+    span.set_attribute("chat.session_id", session_id)
+    span.set_attribute("chat.message_preview", body.message[:120])
+    span.set_attribute("chat.stream", body.stream)
 
     t_req = time.perf_counter()
     try:
