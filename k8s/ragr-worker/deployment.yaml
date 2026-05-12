@@ -23,7 +23,7 @@ spec:
           type: RuntimeDefault
       initContainers:
         - name: migrate
-          image: ghcr.io/cjwillis48/ragr:0.6.2
+          image: ghcr.io/cjwillis48/ragr:0.6.3
           command: ["alembic", "upgrade", "head"]
           securityContext:
             allowPrivilegeEscalation: false
@@ -44,7 +44,7 @@ spec:
               cpu: 250m
       containers:
         - name: worker
-          image: ghcr.io/cjwillis48/ragr:0.6.2
+          image: ghcr.io/cjwillis48/ragr:0.6.3
           command: ["python", "-m", "app.worker"]
           securityContext:
             allowPrivilegeEscalation: false
