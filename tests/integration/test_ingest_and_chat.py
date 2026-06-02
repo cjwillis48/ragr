@@ -25,8 +25,7 @@ async def model_slug(client):
 
 class TestTextIngestion:
     async def test_ingest_text_content(self, client, model_slug):
-        resp = await client.post(f"/models/{model_slug}/sources", json={
-            "source_identifier": "python-basics",
+        resp = await client.put(f"/models/{model_slug}/sources/python-basics", json={
             "content": (
                 "Python is a high-level programming language. "
                 "It supports multiple paradigms including procedural, "
@@ -38,28 +37,25 @@ class TestTextIngestion:
         })
         assert resp.status_code == 200
         data = resp.json()
-        assert len(data) == 1
-        assert data[0]["status"] == "complete"
-        assert data[0]["chunks_created"] >= 1
+        assert data["status"] == "complete"
+        assert data["chunk_count"] >= 1
 
     async def test_ingest_is_idempotent(self, client, model_slug):
         content = "This is idempotent test content that should only be ingested once."
 
         # First ingest
-        resp1 = await client.post(f"/models/{model_slug}/sources", json={
-            "source_identifier": "idempotent-test",
+        resp1 = await client.put(f"/models/{model_slug}/sources/idempotent-test", json={
             "content": content,
         })
         assert resp1.status_code == 200
-        assert resp1.json()[0]["skipped"] is False
+        assert resp1.json()["skipped"] is False
 
         # Second ingest — same content, should be skipped
-        resp2 = await client.post(f"/models/{model_slug}/sources", json={
-            "source_identifier": "idempotent-test",
+        resp2 = await client.put(f"/models/{model_slug}/sources/idempotent-test", json={
             "content": content,
         })
         assert resp2.status_code == 200
-        assert resp2.json()[0]["skipped"] is True
+        assert resp2.json()["skipped"] is True
 
     async def test_text_source_without_url_has_empty_source_url(self, client, model_slug):
         """Sources without an explicit URL (file/text uploads) must have source_url=''.
@@ -68,8 +64,7 @@ class TestTextIngestion:
         was leaking into source_url, breaking the "is this an http link?"
         contract that the console renders against.
         """
-        await client.post(f"/models/{model_slug}/sources", json={
-            "source_identifier": "no-url-source",
+        await client.put(f"/models/{model_slug}/sources/no-url-source", json={
             "content": "Content with no URL provided.",
         })
         resp = await client.get(f"/models/{model_slug}/sources")
@@ -78,8 +73,7 @@ class TestTextIngestion:
 
     async def test_list_sources(self, client, model_slug):
         # Ingest something first
-        await client.post(f"/models/{model_slug}/sources", json={
-            "source_identifier": "list-test",
+        await client.put(f"/models/{model_slug}/sources/list-test", json={
             "content": "Content for listing sources.",
         })
 
@@ -92,18 +86,17 @@ class TestTextIngestion:
 
     async def test_delete_source(self, client, model_slug):
         # Ingest
-        await client.post(f"/models/{model_slug}/sources", json={
-            "source_identifier": "delete-me",
+        await client.put(f"/models/{model_slug}/sources/delete-me", json={
             "content": "Content to be deleted.",
         })
 
-        # Find the source ID
-        sources_resp = await client.get(f"/models/{model_slug}/sources")
-        source = next(s for s in sources_resp.json()["sources"] if s["source_identifier"] == "delete-me")
-
-        # Delete
-        resp = await client.delete(f"/models/{model_slug}/sources/{source['id']}")
+        # Delete by source_identifier
+        resp = await client.delete(f"/models/{model_slug}/sources/delete-me")
         assert resp.status_code == 204
+
+        # Second delete returns 404 (idempotent from the client's perspective)
+        resp2 = await client.delete(f"/models/{model_slug}/sources/delete-me")
+        assert resp2.status_code == 404
 
 
 class TestChat:
@@ -112,8 +105,7 @@ class TestChat:
     @pytest.fixture(autouse=True)
     async def _ingest_content(self, client, model_slug):
         """Ensure content is ingested before chat tests."""
-        await client.post(f"/models/{model_slug}/sources", json={
-            "source_identifier": "chat-knowledge",
+        await client.put(f"/models/{model_slug}/sources/chat-knowledge", json={
             "content": (
                 "Python was created by Guido van Rossum. "
                 "The first version was released in 1991. "
@@ -197,8 +189,7 @@ class TestStats:
     @pytest.fixture(autouse=True)
     async def _setup(self, client, model_slug):
         """Ingest content and send a chat message."""
-        await client.post(f"/models/{model_slug}/sources", json={
-            "source_identifier": "stats-content",
+        await client.put(f"/models/{model_slug}/sources/stats-content", json={
             "content": "Knowledge for stats testing. Python is great.",
         })
         await client.post(f"/models/{model_slug}/chat", json={

@@ -88,3 +88,64 @@ def _merge_into_chunks(
         chunks.append(current)
 
     return chunks
+
+
+def chunk_code(
+    text: str, chunk_size: int = 1000, chunk_overlap: int = 100
+) -> list[tuple[str, int, int]]:
+    """Line-aware chunker for source code.
+
+    Packs whole lines into chunks of at most chunk_size characters, returning
+    (chunk_text, start_line, end_line) tuples where line numbers are 1-indexed
+    and inclusive.
+
+    Differences from chunk_text:
+    - Never splits a line mid-line. A line longer than chunk_size becomes its
+      own chunk (single-line minified files index as one chunk per line).
+    - No section/paragraph awareness — code's natural unit is the line.
+    - Overlap is whole-line: we repeat trailing lines from the previous chunk
+      until the total overlap reaches ~chunk_overlap chars.
+    """
+    if not text.strip():
+        return []
+
+    lines = text.splitlines()
+    if not lines:
+        return []
+
+    chunks: list[tuple[str, int, int]] = []
+    i = 0
+    while i < len(lines):
+        current_size = 0
+        j = i
+        while j < len(lines):
+            line = lines[j]
+            addition = len(line) + (1 if j > i else 0)  # +1 for the joining newline
+            if current_size > 0 and current_size + addition > chunk_size:
+                break
+            current_size += addition
+            j += 1
+
+        if j == i:
+            # A single line exceeds chunk_size on its own — take it anyway to guarantee progress.
+            j = i + 1
+
+        chunk_text = "\n".join(lines[i:j])
+        chunks.append((chunk_text, i + 1, j))
+
+        if j >= len(lines):
+            break
+
+        # Compute next i — back up by whole lines until overlap_size reaches chunk_overlap,
+        # but never repeat the whole chunk and never go backwards.
+        next_i = j
+        if chunk_overlap > 0:
+            overlap_size = 0
+            k = j
+            while k > i + 1 and overlap_size < chunk_overlap:
+                k -= 1
+                overlap_size += len(lines[k]) + 1
+            next_i = max(k, i + 1)
+        i = next_i
+
+    return chunks

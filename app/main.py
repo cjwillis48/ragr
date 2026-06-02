@@ -109,6 +109,7 @@ from app.api.chat import router as chat_router  # noqa: E402
 
 from app.api.admin import router as admin_router  # noqa: E402
 from app.api.api_keys import router as api_keys_router  # noqa: E402
+from app.api.retrieve import router as retrieve_router  # noqa: E402
 from app.api.sources import router as sources_router  # noqa: E402
 from app.api.users import router as users_router  # noqa: E402
 
@@ -117,5 +118,6 @@ app.include_router(chat_router)
 
 app.include_router(admin_router)
 app.include_router(api_keys_router)
+app.include_router(retrieve_router)
 app.include_router(sources_router)
 app.include_router(users_router)

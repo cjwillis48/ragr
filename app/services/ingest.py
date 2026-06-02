@@ -12,7 +12,8 @@ from app.models.content import ContentChunk
 from app.models.ingestion_source import IngestionSource
 from app.models.rag_model import RagModel
 from app.services.budget import estimate_embedding_cost
-from app.services.chunker import chunk_text
+from app.services.chunker import chunk_code, chunk_text
+from app.services.code import language_for_path
 from app.services.embedder import embed_texts
 
 
@@ -74,11 +75,30 @@ async def ingest_content(
                 )
             )
 
-        # Chunk the content (run in thread to avoid blocking the event loop)
+        # Chunk the content (run in thread to avoid blocking the event loop).
+        # Code uses a line-aware chunker that also returns per-chunk start/end lines.
         t_chunk = time.perf_counter()
-        chunks = await asyncio.get_running_loop().run_in_executor(
-            None, partial(chunk_text, content, model.chunk_size, model.chunk_overlap)
-        )
+        loop = asyncio.get_running_loop()
+        if content_type == "code":
+            code_chunks = await loop.run_in_executor(
+                None, partial(chunk_code, content, model.chunk_size, model.chunk_overlap)
+            )
+            chunks = [c[0] for c in code_chunks]
+            language = language_for_path(source_identifier)
+            chunk_metadatas: list[dict] = [
+                {
+                    "file_path": source_identifier,
+                    "start_line": start,
+                    "end_line": end,
+                    "language": language,
+                }
+                for _, start, end in code_chunks
+            ]
+        else:
+            chunks = await loop.run_in_executor(
+                None, partial(chunk_text, content, model.chunk_size, model.chunk_overlap)
+            )
+            chunk_metadatas = [{} for _ in chunks]
         chunk_ms = round((time.perf_counter() - t_chunk) * 1000)
         if not chunks:
             return IngestResult(chunk_count=0, skipped=False, embedding_cost=0.0, chunk_ms=chunk_ms)
@@ -99,8 +119,9 @@ async def ingest_content(
                 "source_url": source_url,
                 "source_identifier": source_identifier,
                 "content_type": content_type,
+                "metadata_": meta,
             }
-            for chunk_text_str, embedding in zip(chunks, embed.embeddings)
+            for chunk_text_str, embedding, meta in zip(chunks, embed.embeddings, chunk_metadatas)
         ]
         await session.execute(pg_insert(ContentChunk).values(chunk_rows))
 
