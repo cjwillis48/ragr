@@ -43,7 +43,7 @@ from app.services.wikipedia import is_wikipedia_url
 router = APIRouter(tags=["sources"])
 logger = logging.getLogger("ragr.sources")
 
-_ingest_limiter = RateLimiter(max_requests=20, window_seconds=60)
+_ingest_limiter = RateLimiter(max_requests=settings.ingest_rate_limit_per_min, window_seconds=60)
 
 ALLOWED_EXTENSIONS = {".txt", ".md", ".html", ".htm", ".pdf", ".csv", ".json"}
 
