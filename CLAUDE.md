@@ -12,12 +12,13 @@ The admin frontend (`ragr-console`) lives in a sibling directory, **not** inside
 app/
   main.py            FastAPI app (API process)
   worker.py          Background ingestion worker (separate process)
-  api/               Route modules: models, chat, sources, api_keys, admin
+  api/               Route modules: models, chat, sources, retrieve, api_keys,
+                     admin, users
   services/          Domain logic: ingest, chunker, embedder, retrieval,
                      generation, reranker, crawler, html, r2, crypto, ...
   models/            SQLAlchemy ORM models
   schemas/           Pydantic request/response schemas
-  middleware/        CORS (dynamic, per-model), request_id
+  middleware/        CORS (dynamic, per-model), request_id, log_context
 migrations/versions/ Alembic migrations
 k8s/                 Manifests: ragr, ragr-worker, postgres, secrets
 scripts/             One-off utilities (chatlie, sponsorbot, debug_retrieval)
