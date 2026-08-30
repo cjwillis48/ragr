@@ -45,3 +45,9 @@ CODE_REVIEW.md
 # Files that will be used in demo
 demo/
 scripts/
+
+# Squirrel parking lot (local idea capture)
+.squirrel/
+
+# ragr-mcp local search telemetry
+.ragr-mcp/

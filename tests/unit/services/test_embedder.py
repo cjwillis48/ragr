@@ -75,7 +75,8 @@ class TestEmbedQuery:
         with patch.object(embedder_module, "_get_client", return_value=mock_client):
             result = await embed_query("what is X?")
 
-        assert result == [0.1, 0.2, 0.3]
+        assert result.embedding == [0.1, 0.2, 0.3]
+        assert result.total_tokens == 50
 
     async def test_query_input_type(self):
         mock_client = AsyncMock()

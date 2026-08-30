@@ -23,6 +23,7 @@ class Settings(BaseSettings):
 
     trusted_proxy_ips: list[str] = []
     rate_limit_per_min: int = 10
+    ingest_rate_limit_per_min: int = 20
     max_upload_size_mb: int = 50
     max_upload_files: int = 20
 

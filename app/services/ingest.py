@@ -45,6 +45,18 @@ async def ingest_content(
 
     content_hash = _compute_hash()
 
+    # Serialize concurrent ingests of the same source. An editor save (or a
+    # watcher) can fire several PUTs for one file in quick succession; without
+    # this, each request deletes old chunks early then inserts new ones after a
+    # slow embed, so concurrent PUTs stack into duplicate chunk rows. This
+    # transaction-scoped advisory lock makes the check-and-replace atomic per
+    # (model, source) — losers re-read the now-current hash and hit the skip
+    # path below, so blind re-PUTs stay idempotent.
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(:lock_model_id, hashtext(:lock_identifier))"),
+        {"lock_model_id": model.id, "lock_identifier": source_identifier},
+    )
+
     # Check for existing ingestion source
     result = await session.execute(
         select(IngestionSource).where(
