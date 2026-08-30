@@ -1,6 +1,7 @@
 NAMESPACE := ragr
+TEST_DATABASE_URL := postgresql+asyncpg://ragr:ragr@localhost:5432/ragr_test
 
-.PHONY: restart logs status enter-pg enter-ragr db-export db-import test test-unit test-cov
+.PHONY: restart logs status enter-pg enter-ragr db-export db-import test test-unit test-cov test-integration
 
 restart:
 	kubectl rollout restart deployment/ragr -n $(NAMESPACE)
@@ -33,3 +34,14 @@ test-unit:
 
 test-cov:
 	uv run pytest --cov=app --cov-report=term-missing
+
+# Integration tests need a real Postgres. docker-compose only creates the `ragr`
+# database, so create `ragr_test` (and its pgvector extension) on first run.
+test-integration:
+	docker compose up -d postgres
+	@until docker compose exec -T postgres pg_isready -U ragr -q; do sleep 1; done
+	@docker compose exec -T postgres psql -U ragr -d ragr -tAc \
+		"SELECT 1 FROM pg_database WHERE datname='ragr_test'" | grep -q 1 \
+		|| docker compose exec -T postgres createdb -U ragr ragr_test
+	@docker compose exec -T postgres psql -U ragr -d ragr_test -qc "CREATE EXTENSION IF NOT EXISTS vector;"
+	DATABASE_URL="$(TEST_DATABASE_URL)" uv run pytest tests/integration -q
