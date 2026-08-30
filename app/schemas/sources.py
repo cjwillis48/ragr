@@ -50,13 +50,10 @@ def _validate_http_url(url: str) -> str:
 
 
 class CreateSourceRequest(BaseModel):
-    """Unified source creation request. Provide content, url, or urls."""
+    """URL-based source creation. Use PUT /sources/{identifier} for raw content."""
     source_identifier: str | None = None
-    content: str | None = Field(default=None, min_length=1, max_length=500_000)
     url: str | None = None
     urls: list[str] | None = Field(default=None, max_length=200)
-    content_type: str = "text"
-    source_url: str = ""
 
     @field_validator("url")
     @classmethod
@@ -75,9 +72,9 @@ class CreateSourceRequest(BaseModel):
 
     @model_validator(mode="after")
     def exactly_one_source(self):
-        provided = sum([self.content is not None, self.url is not None, bool(self.urls)])
+        provided = sum([self.url is not None, bool(self.urls)])
         if provided > 1:
-            raise ValueError("Provide only one of 'content', 'url', or 'urls'")
+            raise ValueError("Provide only one of 'url' or 'urls'")
         return self
 
 
@@ -86,6 +83,22 @@ class CreateSourceResponse(BaseModel):
     status: str
     chunks_created: int | None = None
     skipped: bool = False
+    message: str
+
+
+class UpsertSourceRequest(BaseModel):
+    """Body for PUT /sources/{source_identifier} — push content directly."""
+    content: str = Field(..., min_length=1, max_length=500_000)
+    content_type: str = "text"
+    source_url: str = ""
+
+
+class UpsertSourceResponse(BaseModel):
+    source_identifier: str
+    status: str
+    chunk_count: int
+    skipped: bool
+    embedding_cost: float
     message: str
 
 

@@ -110,7 +110,8 @@ _CROSS_TENANT_ROUTES = [
     # sources.py
     ("GET", "/models/{slug}/sources", None),
     ("DELETE", "/models/{slug}/sources", None),
-    ("POST", "/models/{slug}/sources", {"content": "x", "source_identifier": "evil"}),
+    ("PUT", "/models/{slug}/sources/evil", {"content": "x"}),
+    ("DELETE", "/models/{slug}/sources/evil", None),
 
     # api_keys.py
     ("GET", "/models/{slug}/api-keys", None),
@@ -152,13 +153,13 @@ class TestNestedResourceIsolation:
         resp = await client.get(f"/models/{OTHER_SLUG}/sources/{source.id}")
         assert resp.status_code in (403, 404)
 
-    async def test_cannot_delete_other_tenants_source_by_id(self, client, other_tenant, db_session):
+    async def test_cannot_delete_other_tenants_source_by_identifier(self, client, other_tenant, db_session):
         result = await db_session.execute(
             select(IngestionSource).where(IngestionSource.model_id == other_tenant.id)
         )
         source = result.scalar_one()
 
-        resp = await client.delete(f"/models/{OTHER_SLUG}/sources/{source.id}")
+        resp = await client.delete(f"/models/{OTHER_SLUG}/sources/{source.source_identifier}")
         assert resp.status_code in (403, 404)
 
         # Source must still exist

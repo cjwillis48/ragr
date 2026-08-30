@@ -4,7 +4,7 @@ import time
 
 import pymupdf  # noqa: F401 — eager import to avoid cold-start delay
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,6 +29,8 @@ from app.schemas.sources import (
     PresignedFileInfo,
     SourceListResponse,
     SourceResponse,
+    UpsertSourceRequest,
+    UpsertSourceResponse,
 )
 from app.services.crawler import normalize_url
 from app.services.html import strip_html
@@ -41,7 +43,7 @@ from app.services.wikipedia import is_wikipedia_url
 router = APIRouter(tags=["sources"])
 logger = logging.getLogger("ragr.sources")
 
-_ingest_limiter = RateLimiter(max_requests=20, window_seconds=60)
+_ingest_limiter = RateLimiter(max_requests=settings.ingest_rate_limit_per_min, window_seconds=60)
 
 ALLOWED_EXTENSIONS = {".txt", ".md", ".html", ".htm", ".pdf", ".csv", ".json"}
 
@@ -157,19 +159,19 @@ async def list_source_chunks(
 
 
 @router.delete(
-    "/models/{slug}/sources/{source_id}",
+    "/models/{slug}/sources/{source_identifier:path}",
     status_code=204,
 )
 async def delete_source(
-        source_id: int,
+        source_identifier: str,
         model: RagModel = Depends(require_model_auth),
         session: AsyncSession = Depends(get_session),
 ):
-    """Delete a single source and its chunks."""
+    """Delete a single source and its chunks, keyed by source_identifier (file path / URL)."""
     result = await session.execute(
         select(IngestionSource).where(
             IngestionSource.model_id == model.id,
-            IngestionSource.id == source_id,
+            IngestionSource.source_identifier == source_identifier,
         )
     )
     source = result.scalar_one_or_none()
@@ -179,7 +181,7 @@ async def delete_source(
     await session.execute(
         delete(ContentChunk).where(
             ContentChunk.model_id == model.id,
-            ContentChunk.source_identifier == source.source_identifier,
+            ContentChunk.source_identifier == source_identifier,
         )
     )
     await session.delete(source)
@@ -211,51 +213,68 @@ async def purge_sources(
 
 
 
-@router.post(
-    "/models/{slug}/sources",
-    response_model=list[CreateSourceResponse],
+@router.put(
+    "/models/{slug}/sources/{source_identifier:path}",
+    response_model=UpsertSourceResponse,
     status_code=200,
 )
-async def create_source(
-        body: CreateSourceRequest,
-        response: Response,
+async def upsert_source(
+        source_identifier: str,
+        body: UpsertSourceRequest,
         model: RagModel = Depends(require_model_auth),
         session: AsyncSession = Depends(get_session),
 ):
-    """Unified text/URL ingest. Use POST /sources/upload for file upload.
+    """Upsert a source's content. Idempotent: re-PUTting the same content is a no-op.
 
-    - `content` present → synchronous text ingest (200), requires `source_identifier`
-    - `url` present → async URL fetch + ingest (202), `source_identifier` derived from URL if omitted
-    - `urls` present → async batch URL fetch + ingest (202), `source_identifier` derived from each URL
+    The identifier in the URL is the upsert key — re-PUTting replaces the
+    source's chunks atomically.
     """
     if not _ingest_limiter.is_allowed(f"ingest:{model.id}"):
         raise HTTPException(status_code=429, detail="Rate limit exceeded. Please wait before trying again.")
-    has_content = body.content is not None
+
+    result = await ingest_content(
+        session=session,
+        model=model,
+        content=body.content,
+        source_identifier=source_identifier,
+        content_type=body.content_type,
+        source_url=body.source_url,
+    )
+    return UpsertSourceResponse(
+        source_identifier=source_identifier,
+        status="complete",
+        chunk_count=result.chunk_count,
+        skipped=result.skipped,
+        embedding_cost=result.embedding_cost,
+        message="Content unchanged, skipped re-ingestion" if result.skipped else f"Ingested {result.chunk_count} chunks",
+    )
+
+
+@router.post(
+    "/models/{slug}/sources",
+    response_model=list[CreateSourceResponse],
+    status_code=202,
+)
+async def create_source(
+        body: CreateSourceRequest,
+        model: RagModel = Depends(require_model_auth),
+        session: AsyncSession = Depends(get_session),
+):
+    """Submit URL(s) to fetch and ingest asynchronously.
+
+    For raw content, use `PUT /sources/{source_identifier}` instead.
+    For file uploads, use `POST /sources/upload`.
+
+    - `url` present → async URL fetch + ingest, source_identifier derived from URL if omitted
+    - `urls` present → async batch URL fetch + ingest, source_identifier derived from each URL
+    """
+    if not _ingest_limiter.is_allowed(f"ingest:{model.id}"):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded. Please wait before trying again.")
     has_url = body.url is not None
     has_urls = body.urls is not None and len(body.urls) > 0
 
-    if not (has_content or has_url or has_urls):
-        raise HTTPException(status_code=422, detail="Provide one of 'content', 'url', or 'urls'")
-
-    if has_content:
-        if not body.source_identifier:
-            raise HTTPException(status_code=422, detail="'source_identifier' is required for text ingest")
-        result = await ingest_content(
-            session=session,
-            model=model,
-            content=body.content,
-            source_identifier=body.source_identifier,
-            content_type=body.content_type,
-            source_url=body.source_url,
-        )
-        response.status_code = 200
-        return [CreateSourceResponse(
-            source_identifier=body.source_identifier,
-            status="complete",
-            chunks_created=result.chunk_count,
-            skipped=result.skipped,
-            message="Content unchanged, skipped re-ingestion" if result.skipped else f"Ingested {result.chunk_count} chunks",
-        )]
+    if not (has_url or has_urls):
+        raise HTTPException(status_code=422, detail="Provide one of 'url' or 'urls'")
 
     # Validate URLs before processing (skip Wikipedia — known-safe, uses API)
     url_list = body.urls if has_urls else [body.url]
@@ -310,7 +329,6 @@ async def create_source(
 
     await session.commit()
 
-    response.status_code = 202
     return results
 
 

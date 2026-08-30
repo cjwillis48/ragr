@@ -44,6 +44,7 @@ class RetrievalResult:
     chunks: list[ContentChunk] = field(default_factory=list)
     scores: list[ChunkScore] = field(default_factory=list)
     rerank_tokens: int = 0
+    embed_tokens: int = 0
 
 
 async def _vector_search(
@@ -165,7 +166,7 @@ async def retrieve_with_threshold(
 
     When reranker is enabled, fetches a larger candidate set then reranks down to top_k.
     """
-    query_embedding = await embed_query(query, model=model.embedding_model, voyage_api_key=model.custom_voyage_key)
+    query_embed = await embed_query(query, model=model.embedding_model, voyage_api_key=model.custom_voyage_key)
     threshold_distance = 1.0 - model.similarity_threshold
 
     candidate_limit = model.top_k
@@ -175,7 +176,7 @@ async def retrieve_with_threshold(
     t0 = time.perf_counter()
 
     # Run searches
-    vector_rows = await _vector_search(session, model, query_embedding, threshold_distance, candidate_limit)
+    vector_rows = await _vector_search(session, model, query_embed.embedding, threshold_distance, candidate_limit)
 
     if model.keyword_search_enabled:
         keyword_rows = await _keyword_search(session, model, query, candidate_limit)
@@ -203,4 +204,7 @@ async def retrieve_with_threshold(
         for c in chunks
     ]
 
-    return RetrievalResult(chunks=chunks, scores=scores, rerank_tokens=rerank_tokens)
+    return RetrievalResult(
+        chunks=chunks, scores=scores,
+        rerank_tokens=rerank_tokens, embed_tokens=query_embed.total_tokens,
+    )

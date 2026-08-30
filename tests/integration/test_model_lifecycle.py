@@ -84,27 +84,21 @@ class TestContentLockedFields:
 
     async def test_chunk_size_locked_after_ingest(self, client):
         await client.post("/models", json={"name": "Locked", "slug": "locked-bot"})
-        await client.post("/models/locked-bot/sources", json={
-            "source_identifier": "x", "content": "hello world " * 200,
-        })
+        await client.put("/models/locked-bot/sources/x", json={"content": "hello world " * 200})
         resp = await client.patch("/models/locked-bot", json={"chunk_size": 2000})
         assert resp.status_code == 409
         assert "chunk_size" in resp.json()["detail"]
 
     async def test_embedding_model_locked_after_ingest(self, client):
         await client.post("/models", json={"name": "Lock2", "slug": "lock2-bot"})
-        await client.post("/models/lock2-bot/sources", json={
-            "source_identifier": "x", "content": "hello world " * 200,
-        })
+        await client.put("/models/lock2-bot/sources/x", json={"content": "hello world " * 200})
         resp = await client.patch("/models/lock2-bot", json={"embedding_model": "voyage-4"})
         assert resp.status_code == 409
         assert "embedding_model" in resp.json()["detail"]
 
     async def test_other_fields_still_editable_after_ingest(self, client):
         await client.post("/models", json={"name": "Mixed", "slug": "mixed-bot"})
-        await client.post("/models/mixed-bot/sources", json={
-            "source_identifier": "x", "content": "hello world " * 200,
-        })
+        await client.put("/models/mixed-bot/sources/x", json={"content": "hello world " * 200})
         resp = await client.patch("/models/mixed-bot", json={"top_k": 25, "description": "ok"})
         assert resp.status_code == 200
         body = resp.json()
@@ -114,9 +108,7 @@ class TestContentLockedFields:
     async def test_no_op_locked_field_change_allowed(self, client):
         """Sending the same value the model already has shouldn't 409."""
         await client.post("/models", json={"name": "Noop", "slug": "noop-bot", "chunk_size": 800})
-        await client.post("/models/noop-bot/sources", json={
-            "source_identifier": "x", "content": "hello world " * 200,
-        })
+        await client.put("/models/noop-bot/sources/x", json={"content": "hello world " * 200})
         resp = await client.patch("/models/noop-bot", json={"chunk_size": 800, "description": "still 800"})
         assert resp.status_code == 200
 

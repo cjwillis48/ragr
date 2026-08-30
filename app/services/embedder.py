@@ -14,6 +14,12 @@ class EmbedResult:
     embeddings: list[list[float]]
     total_tokens: int
 
+
+@dataclass
+class EmbedQueryResult:
+    embedding: list[float]
+    total_tokens: int
+
 logger = logging.getLogger("ragr.embedder")
 
 _clients = ClientCache(
@@ -60,12 +66,12 @@ async def embed_texts(
         return EmbedResult(embeddings=all_embeddings, total_tokens=total_tokens)
 
 
-async def embed_query(text: str, model: str = "voyage-4-lite", voyage_api_key: str | None = None) -> list[float]:
-    """Embed a single query text for retrieval."""
+async def embed_query(text: str, model: str = "voyage-4-lite", voyage_api_key: str | None = None) -> EmbedQueryResult:
+    """Embed a single query text for retrieval. Returns embedding + token count."""
     client = _get_client(voyage_api_key)
     with tracer.start_as_current_span("voyage.embed_query", attributes={"voyage.model": model}) as span:
         t0 = time.perf_counter()
         result = await client.embed([text], model=model, input_type="query")
         logger.info("embed_query", extra={"duration_ms": round((time.perf_counter() - t0) * 1000), "tokens": result.total_tokens})
         span.set_attribute("voyage.total_tokens", result.total_tokens)
-        return result.embeddings[0]
+        return EmbedQueryResult(embedding=result.embeddings[0], total_tokens=result.total_tokens)
