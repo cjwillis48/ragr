@@ -3,8 +3,19 @@ import hashlib
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.services.ingest import ingest_content, IngestResult
+from app.services.chunker import ChunkResult
+from app.services.ingest import PIPELINE_VERSION, ingest_content, IngestResult
 from app.services.embedder import EmbedResult
+
+
+def _chunk(text: str, position: int) -> ChunkResult:
+    """Minimal ChunkResult stand-in for chunker output."""
+    return ChunkResult(
+        text=text, position=position, heading_path=[],
+        start_offset=0, end_offset=len(text),
+    )
+
+
 
 
 class TestIngestContent:
@@ -29,7 +40,7 @@ class TestIngestContent:
         session = self._mock_session(existing_source=None)
 
         with (
-            patch("app.services.ingest.chunk_text", return_value=["chunk1", "chunk2"]),
+            patch("app.services.ingest.chunk_text", return_value=[_chunk("chunk1", 0), _chunk("chunk2", 1)]),
             patch("app.services.ingest.embed_texts", new_callable=AsyncMock, return_value=self._mock_embed(2)),
             patch("app.services.ingest.estimate_embedding_cost", return_value=0.001),
         ):
@@ -47,7 +58,11 @@ class TestIngestContent:
 
 
         content = "test content"
-        h = f"{content}:chunk_size={sample_model.chunk_size}:chunk_overlap={sample_model.chunk_overlap}:embedding={sample_model.embedding_model}"
+        h = (
+            f"{content}:chunk_size={sample_model.chunk_size}"
+            f":chunk_overlap={sample_model.chunk_overlap}"
+            f":embedding={sample_model.embedding_model}:pipeline={PIPELINE_VERSION}"
+        )
         expected_hash = hashlib.sha256(h.encode()).hexdigest()
 
         existing = MagicMock()
@@ -72,7 +87,7 @@ class TestIngestContent:
         session = self._mock_session(existing_source=existing)
 
         with (
-            patch("app.services.ingest.chunk_text", return_value=["new-chunk"]),
+            patch("app.services.ingest.chunk_text", return_value=[_chunk("new-chunk", 0)]),
             patch("app.services.ingest.embed_texts", new_callable=AsyncMock, return_value=self._mock_embed(1)),
             patch("app.services.ingest.estimate_embedding_cost", return_value=0.0005),
         ):
@@ -96,7 +111,7 @@ class TestIngestContent:
         session = self._mock_session(existing_source=None)
 
         with (
-            patch("app.services.ingest.chunk_text", return_value=["chunk"]),
+            patch("app.services.ingest.chunk_text", return_value=[_chunk("chunk", 0)]),
             patch("app.services.ingest.embed_texts", new_callable=AsyncMock, side_effect=RuntimeError("API error")),
             pytest.raises(RuntimeError, match="API error"),
         ):
@@ -109,7 +124,11 @@ class TestIngestContent:
 
 
         content = "test"
-        h = f"{content}:chunk_size={sample_model.chunk_size}:chunk_overlap={sample_model.chunk_overlap}:embedding={sample_model.embedding_model}"
+        h = (
+            f"{content}:chunk_size={sample_model.chunk_size}"
+            f":chunk_overlap={sample_model.chunk_overlap}"
+            f":embedding={sample_model.embedding_model}:pipeline={PIPELINE_VERSION}"
+        )
         expected_hash = hashlib.sha256(h.encode()).hexdigest()
 
         existing = MagicMock()

@@ -37,8 +37,11 @@ SUPPORTED_EMBEDDING_MODELS: set[str] = {
 
 SUPPORTED_GENERATION_MODELS: set[str] = {
     "claude-haiku-4-5",
-    "claude-sonnet-4-6",
+    "claude-sonnet-5",
     "claude-opus-4-6",
+    "claude-opus-4-7",
+    "claude-opus-4-8",
+    "claude-opus-5",
 }
 
 
@@ -95,6 +98,7 @@ class _RagModelFields(BaseModel):
     rerank_candidates: int | None = Field(None, ge=1, le=500)
     rerank_threshold: float | None = Field(None, ge=0.0, le=1.0)
     keyword_search_enabled: bool | None = None
+    neighbor_radius: int | None = Field(None, ge=0, le=3)
     sample_messages: list[str] | None = Field(None, max_length=10)
     history_turns: int | None = Field(None, ge=0, le=50)
     max_tokens: int | None = Field(None, ge=1, le=8192)
@@ -165,6 +169,7 @@ class RagModelRead(BaseModel):
     rerank_candidates: int
     rerank_threshold: float
     keyword_search_enabled: bool
+    neighbor_radius: int = 0
     sample_messages: list[str]
     history_turns: int
     max_tokens: int

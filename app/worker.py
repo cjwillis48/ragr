@@ -19,6 +19,7 @@ from app.database import _init_engine
 from app.models.ingestion_job import IngestionJob
 from app.models.ingestion_source import IngestionSource
 from app.models.rag_model import RagModel
+from app.services.extract import extract_text
 from app.services.html import strip_html
 from app.logging_setup import configure_logging
 from app.services.ingest import ingest_content
@@ -212,38 +213,15 @@ async def handle_r2_file_job(job: IngestionJob) -> None:
     """Download from R2, extract text, ingest. Delete from R2 only on success
     so that failed attempts can be retried against the same object.
     """
-    from pathlib import Path
-
-    import pymupdf  # noqa: F401
     from app.services.r2 import delete_object, download_object
 
     object_key = job.job_params["object_key"]
     filename = job.job_params["filename"]
     model_id = job.model_id
 
-    ALLOWED_EXTENSIONS = {".txt", ".md", ".html", ".htm", ".pdf", ".csv", ".json"}
-
     raw = await download_object(object_key)
-
-    # Inline text extraction (same logic as _extract_text in sources.py)
-    ext = Path(filename).suffix.lower()
-    if ext not in ALLOWED_EXTENSIONS:
-        raise ValueError(f"Unsupported file type: {ext}")
-
-    if ext == ".pdf":
-        doc = pymupdf.Document(stream=raw, filetype="pdf")
-        pages = [page.get_text() for page in doc]
-        text = "\n\n".join(pages)
-        content_type = "pdf"
-    else:
-        text = raw.decode("utf-8")
-        if ext in (".html", ".htm"):
-            text = await asyncio.to_thread(strip_html, text)
-            content_type = "html"
-        elif ext == ".md":
-            content_type = "markdown"
-        else:
-            content_type = "text"
+    # Parsing is CPU-bound; keep it off the event loop shared with other jobs.
+    text, content_type = await asyncio.to_thread(extract_text, filename, raw)
 
     async with db.async_session() as session:
         result = await session.execute(select(RagModel).where(RagModel.id == model_id))

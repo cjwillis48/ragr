@@ -16,6 +16,11 @@ from app.services.chunker import chunk_text
 from app.services.embedder import embed_texts
 
 
+# Bump when extraction or chunking changes shape. Without it, re-chunking a
+# source whose stored text is unchanged hashes identically and silently skips.
+PIPELINE_VERSION = 2
+
+
 @dataclass
 class IngestResult:
     chunk_count: int
@@ -40,7 +45,10 @@ async def ingest_content(
     If changed, delete old chunks and re-embed.
     """
     def _compute_hash() -> str:
-        h = f"{content}:chunk_size={model.chunk_size}:chunk_overlap={model.chunk_overlap}:embedding={model.embedding_model}"
+        h = (
+            f"{content}:chunk_size={model.chunk_size}:chunk_overlap={model.chunk_overlap}"
+            f":embedding={model.embedding_model}:pipeline={PIPELINE_VERSION}"
+        )
         return hashlib.sha256(h.encode()).hexdigest()
 
     content_hash = _compute_hash()
@@ -97,7 +105,9 @@ async def ingest_content(
 
         # Embed all chunks
         t_embed = time.perf_counter()
-        embed = await embed_texts(chunks, model=model.embedding_model, voyage_api_key=model.custom_voyage_key)
+        embed = await embed_texts(
+            [c.text for c in chunks], model=model.embedding_model, voyage_api_key=model.custom_voyage_key
+        )
         embed_ms = round((time.perf_counter() - t_embed) * 1000)
 
         # Store chunks (single multi-row INSERT instead of per-row session.add())
@@ -105,14 +115,20 @@ async def ingest_content(
         chunk_rows = [
             {
                 "model_id": model.id,
-                "content": chunk_text_str,
+                "content": chunk.text,
                 "embedding": embedding,
-                "search_vector": func.to_tsvector("english", chunk_text_str),
+                "search_vector": func.to_tsvector("english", chunk.text),
                 "source_url": source_url,
                 "source_identifier": source_identifier,
                 "content_type": content_type,
+                "position": chunk.position,
+                "metadata_": {
+                    "heading_path": chunk.heading_path,
+                    "start_offset": chunk.start_offset,
+                    "end_offset": chunk.end_offset,
+                },
             }
-            for chunk_text_str, embedding in zip(chunks, embed.embeddings)
+            for chunk, embedding in zip(chunks, embed.embeddings)
         ]
         await session.execute(pg_insert(ContentChunk).values(chunk_rows))
 

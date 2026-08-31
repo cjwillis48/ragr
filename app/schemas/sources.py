@@ -31,8 +31,10 @@ class ChunkResponse(BaseModel):
     source_identifier: str
     content_type: str
     ingested_at: datetime
+    position: int = 0
+    metadata_: dict = Field(default_factory=dict, serialization_alias="metadata")
 
-    model_config = {"from_attributes": True}
+    model_config = {"from_attributes": True, "populate_by_name": True}
 
 
 class ChunkListResponse(BaseModel):
@@ -151,3 +153,16 @@ class CrawlResponse(BaseModel):
     status: str
     message: str
     pages_queued: int
+
+
+class ReingestItem(BaseModel):
+    source_identifier: str
+    mode: str  # refetch | rechunk | skipped
+    reason: str | None = None
+
+
+class ReingestResponse(BaseModel):
+    model_slug: str
+    queued: int
+    skipped: int
+    sources: list[ReingestItem]

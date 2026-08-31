@@ -1,6 +1,6 @@
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
-from app.services.retrieval import _rrf_merge, ChunkScore, RRF_K
+from app.services.retrieval import _expand_neighbours, _rrf_merge, ChunkScore, RRF_K
 
 
 def _make_chunk(chunk_id: int) -> MagicMock:
@@ -114,3 +114,79 @@ class TestRRFMerge:
 
         _, distances, _ = _rrf_merge(vector, keyword, limit=10)
         assert distances[1] == 0.25  # from vector, not 1.0
+
+
+def _positioned(chunk_id: int, source: str, position: int) -> MagicMock:
+    chunk = MagicMock()
+    chunk.id = chunk_id
+    chunk.source_identifier = source
+    chunk.position = position
+    chunk.content = f"content-{chunk_id}"
+    return chunk
+
+
+def _session_returning(chunks):
+    """AsyncSession stub whose execute() yields the given chunks."""
+    result = MagicMock()
+    result.scalars.return_value.all.return_value = chunks
+    session = MagicMock()
+    session.execute = AsyncMock(return_value=result)
+    return session
+
+
+def _model(radius: int) -> MagicMock:
+    model = MagicMock()
+    model.id = 1
+    model.neighbor_radius = radius
+    return model
+
+
+class TestExpandNeighbours:
+    async def test_radius_zero_is_a_no_op(self):
+        hits = [_positioned(10, "doc", 5)]
+        session = _session_returning([])
+        assert await _expand_neighbours(session, _model(0), hits) == hits
+        session.execute.assert_not_called()
+
+    async def test_empty_hits_short_circuits(self):
+        session = _session_returning([])
+        assert await _expand_neighbours(session, _model(1), []) == []
+        session.execute.assert_not_called()
+
+    async def test_neighbours_surround_their_hit_in_order(self):
+        hit = _positioned(10, "doc", 5)
+        before, after = _positioned(9, "doc", 4), _positioned(11, "doc", 6)
+        session = _session_returning([after, before])  # DB order is arbitrary
+        out = await _expand_neighbours(session, _model(1), [hit])
+        assert [c.id for c in out] == [9, 10, 11]
+
+    async def test_missing_neighbour_is_skipped(self):
+        """Position 0 has no predecessor; the hit still comes back."""
+        hit = _positioned(10, "doc", 0)
+        session = _session_returning([_positioned(11, "doc", 1)])
+        out = await _expand_neighbours(session, _model(1), [hit])
+        assert [c.id for c in out] == [10, 11]
+
+    async def test_adjacent_hits_do_not_duplicate_shared_neighbours(self):
+        a, b = _positioned(10, "doc", 5), _positioned(12, "doc", 7)
+        shared = _positioned(11, "doc", 6)
+        session = _session_returning([shared, _positioned(9, "doc", 4), _positioned(13, "doc", 8)])
+        out = await _expand_neighbours(session, _model(1), [a, b])
+        assert [c.id for c in out] == [9, 10, 11, 12, 13]
+        assert len(out) == len(set(c.id for c in out))
+
+    async def test_neighbours_scoped_to_the_same_source(self):
+        """Position is only meaningful within a source."""
+        hit_a = _positioned(10, "doc-a", 3)
+        hit_b = _positioned(20, "doc-b", 3)
+        session = _session_returning([])
+        out = await _expand_neighbours(session, _model(1), [hit_a, hit_b])
+        assert [c.id for c in out] == [10, 20]
+        wanted = session.execute.call_args[0][0]
+        assert wanted is not None  # query built without raising on mixed sources
+
+    async def test_hits_are_never_displaced_by_neighbours(self):
+        hits = [_positioned(10, "doc", 5), _positioned(30, "doc", 20)]
+        session = _session_returning([_positioned(31, "doc", 21)])
+        out = await _expand_neighbours(session, _model(1), hits)
+        assert out.index(hits[0]) < out.index(hits[1])

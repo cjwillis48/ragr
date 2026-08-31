@@ -2,7 +2,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.content import ContentChunk
@@ -157,6 +157,52 @@ async def _rerank_chunks(
     return reranked, rerank_scores, rerank_result.total_tokens
 
 
+async def _expand_neighbours(
+    session: AsyncSession,
+    model: RagModel,
+    chunks: list[ContentChunk],
+) -> list[ContentChunk]:
+    """Pull each hit's adjacent chunks back in, so context split across a
+    boundary arrives whole. Neighbours are inserted next to the hit that pulled
+    them in, preserving rank order; the hits themselves are never displaced.
+    """
+    radius = model.neighbor_radius or 0
+    if radius <= 0 or not chunks:
+        return chunks
+
+    wanted = {
+        (c.source_identifier, c.position + offset)
+        for c in chunks
+        for offset in range(-radius, radius + 1)
+        if offset
+    }
+    have = {(c.source_identifier, c.position) for c in chunks}
+    wanted -= have
+    if not wanted:
+        return chunks
+
+    rows = (await session.execute(
+        select(ContentChunk).where(
+            ContentChunk.model_id == model.id,
+            tuple_(ContentChunk.source_identifier, ContentChunk.position).in_(wanted),
+        )
+    )).scalars().all()
+    by_key = {(r.source_identifier, r.position): r for r in rows}
+
+    expanded: list[ContentChunk] = []
+    seen: set[int] = set()
+    for chunk in chunks:
+        for offset in range(-radius, radius + 1):
+            neighbour = (
+                chunk if offset == 0
+                else by_key.get((chunk.source_identifier, chunk.position + offset))
+            )
+            if neighbour is not None and neighbour.id not in seen:
+                seen.add(neighbour.id)
+                expanded.append(neighbour)
+    return expanded
+
+
 async def retrieve_with_threshold(
     session: AsyncSession,
     model: RagModel,
@@ -193,11 +239,12 @@ async def retrieve_with_threshold(
     })
 
     chunks, rerank_scores, rerank_tokens = await _rerank_chunks(model, query, chunks)
+    chunks = await _expand_neighbours(session, model, chunks)
 
     scores = [
         ChunkScore(
             chunk_id=c.id,
-            distance=round(distances[c.id], 4),
+            distance=round(distances[c.id], 4) if c.id in distances else 1.0,
             rerank_score=round(rerank_scores[c.id], 4) if c.id in rerank_scores else None,
             keyword_rank=keyword_ranks.get(c.id),
         )
