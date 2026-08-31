@@ -88,11 +88,13 @@ async def _log_message(
     tokens_out: int,
     session_id: str | None = None,
     scores: list[ChunkScore] | None = None,
+    cited: list[int] | None = None,
 ) -> None:
     """Record token usage and log the message under its conversation."""
     await record_usage(session, model, tokens_in, tokens_out)
+    cited_ids = set(cited or ())
     retrieved_chunks = (
-        [{"chunk_id": s.chunk_id, "distance": s.distance, "rerank_score": s.rerank_score, "keyword_rank": s.keyword_rank, "retrieval_method": s.retrieval_method} for s in scores]
+        [{"chunk_id": s.chunk_id, "distance": s.distance, "rerank_score": s.rerank_score, "keyword_rank": s.keyword_rank, "retrieval_method": s.retrieval_method, "cited": s.chunk_id in cited_ids} for s in scores]
         if scores else None
     )
 
@@ -198,7 +200,7 @@ async def chat(
         if e.status_code == 529:
             raise HTTPException(status_code=503, detail="AI provider is temporarily overloaded. Please try again.")
         raise
-    await _log_message(session, model, body.message, result.response, result.status, result.input_tokens, result.output_tokens, session_id, retrieval.scores)
+    await _log_message(session, model, body.message, result.response, result.status, result.input_tokens, result.output_tokens, session_id, retrieval.scores, result.cited)
 
     generation_cost = estimate_cost(model.generation_model, result.input_tokens, result.output_tokens)
 
@@ -230,7 +232,7 @@ async def _stream_response(
         async with db.async_session() as stream_session:
             async for event in generate_answer_stream(model, message, chunks, history=history):
                 if isinstance(event, GenerationResult):
-                    await _log_message(stream_session, model, message, event.response, event.status, event.input_tokens, event.output_tokens, session_id, scores)
+                    await _log_message(stream_session, model, message, event.response, event.status, event.input_tokens, event.output_tokens, session_id, scores, event.cited)
                     generation_cost = estimate_cost(model.generation_model, event.input_tokens, event.output_tokens)
                     data = json.dumps({
                         "response": event.response,
