@@ -143,7 +143,7 @@ async def crawl_site(
 
             if len(resp.content) > 10 * 1024 * 1024:
                 logger.warning("crawl_page_oversized", extra={"url": url, "bytes": len(resp.content)})
-                return SkippedPage(url=url, reason="oversized", detail=f"{len(resp.content) // (1024 * 1024)} MB")
+                return SkippedPage(url=url, reason="oversized", detail=f"{len(resp.content) / (1024 * 1024):.1f} MB")
 
             content_type_header = resp.headers.get("content-type", "")
             if "html" not in content_type_header:

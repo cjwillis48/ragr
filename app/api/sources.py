@@ -1,8 +1,7 @@
+import asyncio
 import logging
-from pathlib import Path
 import time
 
-import pymupdf  # noqa: F401 — eager import to avoid cold-start delay
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
 from sqlalchemy import delete, func, select
@@ -31,9 +30,11 @@ from app.schemas.sources import (
     SourceResponse,
     UpsertSourceRequest,
     UpsertSourceResponse,
+    ReingestItem,
+    ReingestResponse,
 )
 from app.services.crawler import normalize_url
-from app.services.html import strip_html
+from app.services.extract import ExtractionError, extract_text
 from app.services.ingest import ingest_content
 from app.services.r2 import is_configured as r2_is_configured
 from app.services.rate_limit import RateLimiter
@@ -44,13 +45,6 @@ router = APIRouter(tags=["sources"])
 logger = logging.getLogger("ragr.sources")
 
 _ingest_limiter = RateLimiter(max_requests=settings.ingest_rate_limit_per_min, window_seconds=60)
-
-ALLOWED_EXTENSIONS = {".txt", ".md", ".html", ".htm", ".pdf", ".csv", ".json"}
-
-
-class ExtractionError(Exception):
-    """Raised when text extraction from a file fails."""
-
 
 
 @router.get(
@@ -332,38 +326,6 @@ async def create_source(
     return results
 
 
-def _extract_text(filename: str, raw: bytes) -> tuple[str, str]:
-    """Extract text and content_type from raw file bytes. Raises ExtractionError on failure."""
-    ext = Path(filename).suffix.lower()
-    if ext not in ALLOWED_EXTENSIONS:
-        raise ExtractionError(f"Unsupported file type: {ext}")
-
-    if ext == ".pdf":
-        try:
-            doc = pymupdf.Document(stream=raw, filetype="pdf")
-        except Exception:
-            raise ExtractionError("Could not parse PDF")
-        pages = [page.get_text() for page in doc]
-        text = "\n\n".join(pages)
-        page_count = len(pages)
-        char_count = len(text.strip())
-        logger.info("pdf_extracted", extra={"source_filename": filename, "pages": page_count, "chars": char_count})
-        if char_count < 100:
-            raise ExtractionError("PDF appears to be scanned/image-based")
-        return text, "pdf"
-
-    try:
-        text = raw.decode("utf-8")
-    except UnicodeDecodeError:
-        raise ExtractionError("File must be UTF-8 encoded text")
-
-    if ext in (".html", ".htm"):
-        return strip_html(text), "html"
-    elif ext == ".md":
-        return text, "markdown"
-    return text, "text"
-
-
 @router.post(
     "/models/{slug}/sources/upload",
     response_model=list[CreateSourceResponse],
@@ -411,7 +373,7 @@ async def upload_source(
             )
         t_read = time.monotonic()
         try:
-            text, content_type = _extract_text(file.filename, raw)
+            text, content_type = await asyncio.to_thread(extract_text, file.filename, raw)
         except ExtractionError as e:
             raise HTTPException(status_code=422, detail=str(e))
         t_extract = time.monotonic()
@@ -622,3 +584,85 @@ async def crawl_site_endpoint(
         message=f"Crawling {body.url} (max {body.max_pages} pages, depth {body.max_depth})",
         pages_queued=0,
     )
+
+
+def _plan_reingest(source: IngestionSource) -> tuple[str, dict | None, str | None]:
+    """Decide how a source can be rebuilt. Returns (mode, job_params, reason)."""
+    if source.source_url:
+        # Re-fetch so the source goes back through extraction — the only way to
+        # pick up parser improvements, since raw_content holds post-extraction text.
+        return "refetch", {"url": source.source_url, "source_identifier": source.source_identifier}, None
+    if source.raw_content:
+        return "rechunk", {
+            "source_identifier": source.source_identifier,
+            "content_type": source.content_type,
+        }, None
+    return "skipped", None, "no source_url to re-fetch and no stored content to re-chunk"
+
+
+async def _queue_reingest(
+    session: AsyncSession, model: RagModel, sources: list[IngestionSource]
+) -> ReingestResponse:
+    items: list[ReingestItem] = []
+    for source in sources:
+        mode, params, reason = _plan_reingest(source)
+        items.append(ReingestItem(source_identifier=source.source_identifier, mode=mode, reason=reason))
+        if params is None:
+            continue
+        session.add(IngestionJob(
+            model_id=model.id,
+            job_type="url" if mode == "refetch" else "file",
+            job_params=params,
+        ))
+        source.status = "pending"
+
+    await session.commit()
+    queued = sum(1 for i in items if i.mode != "skipped")
+    logger.info("reingest_queued", extra={
+        "slug": model.slug, "queued": queued, "skipped": len(items) - queued,
+    })
+    return ReingestResponse(
+        model_slug=model.slug, queued=queued, skipped=len(items) - queued, sources=items,
+    )
+
+
+@router.post("/models/{slug}/sources/reingest", response_model=ReingestResponse, status_code=202)
+async def reingest_all_sources(
+    model: RagModel = Depends(require_model_auth),
+    session: AsyncSession = Depends(get_session),
+):
+    """Rebuild every source in the model through the current extraction and chunking.
+
+    Sources with a URL are re-fetched; the rest are re-chunked from stored text.
+    """
+    if not _ingest_limiter.is_allowed(f"ingest:{model.id}"):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded. Please wait before trying again.")
+
+    sources = (await session.execute(
+        select(IngestionSource).where(IngestionSource.model_id == model.id)
+    )).scalars().all()
+    if not sources:
+        raise HTTPException(status_code=404, detail="Model has no sources to reingest")
+    return await _queue_reingest(session, model, list(sources))
+
+
+@router.post(
+    "/models/{slug}/sources/{source_identifier:path}/reingest",
+    response_model=ReingestResponse,
+    status_code=202,
+)
+async def reingest_source(
+    source_identifier: str,
+    model: RagModel = Depends(require_model_auth),
+    session: AsyncSession = Depends(get_session),
+):
+    """Rebuild a single source through the current extraction and chunking."""
+    source = (await session.execute(
+        select(IngestionSource).where(
+            IngestionSource.model_id == model.id,
+            IngestionSource.source_identifier == source_identifier,
+        )
+    )).scalar_one_or_none()
+    if source is None:
+        raise HTTPException(status_code=404, detail=f"Source not found: {source_identifier}")
+    return await _queue_reingest(session, model, [source])

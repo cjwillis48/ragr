@@ -10,9 +10,13 @@ from app.models.token_usage import TokenUsage
 # Approximate pricing per 1M tokens (USD)
 # These are rough estimates — update as pricing changes
 MODEL_PRICING = {
-    "claude-haiku-4-5": {"input": 0.80, "output": 4.0},
+    "claude-haiku-4-5": {"input": 1.0, "output": 5.0},
+    "claude-sonnet-5": {"input": 2.0, "output": 10.0},
     "claude-sonnet-4-6": {"input": 3.0, "output": 15.0},
-    "claude-opus-4-6": {"input": 15.0, "output": 75.0},
+    "claude-opus-4-6": {"input": 5.0, "output": 25.0},
+    "claude-opus-4-7": {"input": 5.0, "output": 25.0},
+    "claude-opus-4-8": {"input": 5.0, "output": 25.0},
+    "claude-opus-5": {"input": 5.0, "output": 25.0},
 }
 DEFAULT_PRICING = {"input": 3.0, "output": 15.0}
 

@@ -210,3 +210,38 @@ class TestStats:
         data = resp.json()
         assert data["total"] >= 1
         assert len(data["conversations"]) >= 1
+
+
+class TestStatusDetailLifecycle:
+    """A source that failed and then succeeded must stop advertising the failure."""
+
+    async def test_successful_reingest_clears_a_stale_status_detail(self, client, model_slug):
+        # Whitespace-only content yields no chunks: recorded as failed, with a reason.
+        resp = await client.put(f"/models/{model_slug}/sources/spa-page", json={
+            "content": "   \n\n   ",
+            "content_type": "text",
+        })
+        assert resp.status_code == 200
+
+        listed = (await client.get(f"/models/{model_slug}/sources")).json()["sources"]
+        source = next(s for s in listed if s["source_identifier"] == "spa-page")
+        assert source["status"] == "failed"
+        assert source["status_detail"], "an empty source should explain why it failed"
+
+        # The site gains server-side rendering and is ingested again.
+        resp = await client.put(f"/models/{model_slug}/sources/spa-page", json={
+            "content": (
+                "Our pricing starts at $10 per month for the starter plan. "
+                "It includes five thousand queries and email support."
+            ),
+            "content_type": "text",
+        })
+        assert resp.status_code == 200
+
+        listed = (await client.get(f"/models/{model_slug}/sources")).json()["sources"]
+        source = next(s for s in listed if s["source_identifier"] == "spa-page")
+        assert source["status"] == "complete"
+        assert source["chunk_count"] > 0
+        assert not source["status_detail"], (
+            "a green 'complete' row must not still say the page renders with JavaScript"
+        )

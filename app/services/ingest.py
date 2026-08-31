@@ -16,6 +16,11 @@ from app.services.chunker import chunk_text
 from app.services.embedder import embed_texts
 
 
+# Bump when extraction or chunking changes shape. Without it, re-chunking a
+# source whose stored text is unchanged hashes identically and silently skips.
+PIPELINE_VERSION = 2
+
+
 @dataclass
 class IngestResult:
     chunk_count: int
@@ -24,6 +29,44 @@ class IngestResult:
     chunk_ms: int = 0
     embed_ms: int = 0
     db_ms: int = 0
+
+
+async def _record_empty_source(
+    session: AsyncSession,
+    model: RagModel,
+    source_identifier: str,
+    content_hash: str,
+    source_url: str,
+    content_type: str,
+) -> None:
+    """Mark a source that yielded no chunks as failed, with a reason.
+
+    Usually a JavaScript-rendered page: the fetch succeeded but there was no
+    text to extract.
+    """
+    stmt = pg_insert(IngestionSource).values(
+        model_id=model.id,
+        source_identifier=source_identifier,
+        content_hash=content_hash,
+        chunk_count=0,
+        source_url=source_url,
+        content_type=content_type,
+        status="failed",
+        status_detail="No text could be extracted — the page may render its content with JavaScript.",
+        embedding_cost=0.0,
+        raw_content=None,
+    )
+    stmt = stmt.on_conflict_do_update(
+        constraint="uq_model_source",
+        set_={
+            "content_hash": stmt.excluded.content_hash,
+            "chunk_count": stmt.excluded.chunk_count,
+            "status": stmt.excluded.status,
+            "status_detail": stmt.excluded.status_detail,
+        },
+    )
+    await session.execute(stmt)
+    await session.commit()
 
 
 async def ingest_content(
@@ -40,7 +83,10 @@ async def ingest_content(
     If changed, delete old chunks and re-embed.
     """
     def _compute_hash() -> str:
-        h = f"{content}:chunk_size={model.chunk_size}:chunk_overlap={model.chunk_overlap}:embedding={model.embedding_model}"
+        h = (
+            f"{content}:chunk_size={model.chunk_size}:chunk_overlap={model.chunk_overlap}"
+            f":embedding={model.embedding_model}:pipeline={PIPELINE_VERSION}"
+        )
         return hashlib.sha256(h.encode()).hexdigest()
 
     content_hash = _compute_hash()
@@ -93,11 +139,19 @@ async def ingest_content(
         )
         chunk_ms = round((time.perf_counter() - t_chunk) * 1000)
         if not chunks:
+            # Old chunks were already deleted above, so the source must be
+            # recorded as finished — otherwise it sits at "pending" forever and
+            # a reingest never resolves it.
+            await _record_empty_source(
+                session, model, source_identifier, content_hash, source_url, content_type
+            )
             return IngestResult(chunk_count=0, skipped=False, embedding_cost=0.0, chunk_ms=chunk_ms)
 
         # Embed all chunks
         t_embed = time.perf_counter()
-        embed = await embed_texts(chunks, model=model.embedding_model, voyage_api_key=model.custom_voyage_key)
+        embed = await embed_texts(
+            [c.text for c in chunks], model=model.embedding_model, voyage_api_key=model.custom_voyage_key
+        )
         embed_ms = round((time.perf_counter() - t_embed) * 1000)
 
         # Store chunks (single multi-row INSERT instead of per-row session.add())
@@ -105,14 +159,20 @@ async def ingest_content(
         chunk_rows = [
             {
                 "model_id": model.id,
-                "content": chunk_text_str,
+                "content": chunk.text,
                 "embedding": embedding,
-                "search_vector": func.to_tsvector("english", chunk_text_str),
+                "search_vector": func.to_tsvector("english", chunk.text),
                 "source_url": source_url,
                 "source_identifier": source_identifier,
                 "content_type": content_type,
+                "position": chunk.position,
+                "metadata_": {
+                    "heading_path": chunk.heading_path,
+                    "start_offset": chunk.start_offset,
+                    "end_offset": chunk.end_offset,
+                },
             }
-            for chunk_text_str, embedding in zip(chunks, embed.embeddings)
+            for chunk, embedding in zip(chunks, embed.embeddings)
         ]
         await session.execute(pg_insert(ContentChunk).values(chunk_rows))
 
@@ -127,6 +187,7 @@ async def ingest_content(
             source_url=source_url,
             content_type=content_type,
             status="complete",
+            status_detail=None,
             embedding_cost=embedding_cost,
             raw_content=content,
         )
@@ -138,6 +199,7 @@ async def ingest_content(
                 "source_url": stmt.excluded.source_url,
                 "content_type": stmt.excluded.content_type,
                 "status": stmt.excluded.status,
+                "status_detail": stmt.excluded.status_detail,
                 "embedding_cost": stmt.excluded.embedding_cost,
                 "raw_content": stmt.excluded.raw_content,
             },

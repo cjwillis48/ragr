@@ -1,0 +1,17 @@
+[
+  {"query": "Who is Hades married to?",                          "expect_source": "/wiki/Persephone"},
+  {"query": "What guards the entrance to the underworld?",       "expect_source": "/wiki/Cerberus"},
+  {"query": "Who are Hades' brothers and sisters?",              "expect_source": "/wiki/Hades"},
+  {"query": "What is the Greek underworld like?",                "expect_source": "/wiki/Greek_underworld"},
+  {"query": "Why does Persephone return to the underworld each year?", "expect_source": "/wiki/Demeter"},
+  {"query": "What was the Roman equivalent of Hades?",           "expect_source": "/wiki/Pluto_(mythology)"},
+  {"query": "Which god rules the sea?",                          "expect_source": "/wiki/Poseidon"},
+  {"query": "Where do the blessed dead go in Greek myth?",       "expect_source": "/wiki/Elysium"},
+  {"query": "Tell me about the Orphic Hymns",                    "expect_source": "/wiki/Orphic_Hymns"},
+  {"query": "Who was Socrates?",                                 "expect_source": "/wiki/Socrates"},
+  {"query": "What happens in the Iliad?",                        "expect_source": "/wiki/Iliad"},
+  {"query": "How was Persephone abducted?",                      "expect_source": "/wiki/Persephone"},
+  {"query": "Who is the messenger god?",                         "expect_source": "/wiki/Hermes"},
+  {"query": "What is Helios the god of?",                        "expect_source": "/wiki/Helios"},
+  {"query": "Describe the goddess Athena",                       "expect_source": "/wiki/Athena"}
+]

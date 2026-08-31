@@ -48,6 +48,8 @@ class RagModel(Base):
     rerank_candidates: Mapped[int] = mapped_column(Integer, default=60)
     rerank_threshold: Mapped[float] = mapped_column(Float, default=0.0)
     keyword_search_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Chunks either side of a hit to pull back in; 0 disables. Multiplies context size.
+    neighbor_radius: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     sample_messages: Mapped[list[str]] = mapped_column(JSONB, default=list)
     history_turns: Mapped[int] = mapped_column(Integer, default=10)
     max_tokens: Mapped[int] = mapped_column(Integer, default=1024)

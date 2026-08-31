@@ -14,9 +14,9 @@ from app.schemas.models import SUPPORTED_GENERATION_MODELS
 
 class TestEstimateCost:
     def test_known_model_haiku(self):
-        # haiku: input=0.80, output=4.0 per 1M
+        # haiku 4.5: input=1.00, output=5.00 per 1M
         cost = estimate_cost("claude-haiku-4-5", 1_000_000, 1_000_000)
-        assert cost == pytest.approx(4.80)
+        assert cost == pytest.approx(6.00)
 
     def test_known_model_sonnet(self):
         # sonnet: input=3.0, output=15.0 per 1M
@@ -24,9 +24,9 @@ class TestEstimateCost:
         assert cost == pytest.approx(3.0)
 
     def test_known_model_opus(self):
-        # opus: input=15.0, output=75.0 per 1M
+        # opus 4.6: input=5.00, output=25.00 per 1M
         cost = estimate_cost("claude-opus-4-6", 1_000_000, 1_000_000)
-        assert cost == pytest.approx(90.0)
+        assert cost == pytest.approx(30.0)
 
     def test_unknown_model_uses_default(self):
         # DEFAULT: input=3.0, output=15.0
@@ -38,7 +38,7 @@ class TestEstimateCost:
 
     def test_small_token_count(self):
         cost = estimate_cost("claude-haiku-4-5", 1000, 500)
-        assert cost == pytest.approx((1000 * 0.80 + 500 * 4.0) / 1_000_000)
+        assert cost == pytest.approx((1000 * 1.0 + 500 * 5.0) / 1_000_000)
 
 
 class TestModelPricingSync:
