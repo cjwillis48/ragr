@@ -107,6 +107,18 @@ class TestIngestContent:
         assert result.chunk_count == 0
         assert result.skipped is False
 
+    async def test_empty_content_records_failure_status(self, sample_model):
+        """Without this the source sits at 'pending' forever and a reingest
+        never resolves it — the fetch succeeded, there was just no text."""
+        session = self._mock_session(existing_source=None)
+
+        with patch("app.services.ingest.chunk_text", return_value=[]):
+            await ingest_content(session, sample_model, "   ", "source-1")
+
+        # The status upsert must have been issued, and the work committed.
+        assert session.execute.await_count >= 2
+        session.commit.assert_awaited()
+
     async def test_rollback_on_error(self, sample_model):
         session = self._mock_session(existing_source=None)
 

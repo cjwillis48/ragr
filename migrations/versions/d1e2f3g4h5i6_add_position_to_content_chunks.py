@@ -33,8 +33,14 @@ def upgrade() -> None:
         "content_chunks",
         ["model_id", "source_identifier", "position"],
     )
+    # (model_id, source_identifier) is a strict prefix of the index above, so
+    # Postgres can serve those lookups from it. Keeping both just costs writes.
+    op.drop_index("ix_content_chunks_model_source", table_name="content_chunks")
 
 
 def downgrade() -> None:
+    op.create_index(
+        "ix_content_chunks_model_source", "content_chunks", ["model_id", "source_identifier"]
+    )
     op.drop_index("ix_content_chunks_model_source_position", table_name="content_chunks")
     op.drop_column("content_chunks", "position")

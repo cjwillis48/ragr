@@ -31,6 +31,44 @@ class IngestResult:
     db_ms: int = 0
 
 
+async def _record_empty_source(
+    session: AsyncSession,
+    model: RagModel,
+    source_identifier: str,
+    content_hash: str,
+    source_url: str,
+    content_type: str,
+) -> None:
+    """Mark a source that yielded no chunks as failed, with a reason.
+
+    Usually a JavaScript-rendered page: the fetch succeeded but there was no
+    text to extract.
+    """
+    stmt = pg_insert(IngestionSource).values(
+        model_id=model.id,
+        source_identifier=source_identifier,
+        content_hash=content_hash,
+        chunk_count=0,
+        source_url=source_url,
+        content_type=content_type,
+        status="failed",
+        status_detail="No text could be extracted — the page may render its content with JavaScript.",
+        embedding_cost=0.0,
+        raw_content=None,
+    )
+    stmt = stmt.on_conflict_do_update(
+        constraint="uq_model_source",
+        set_={
+            "content_hash": stmt.excluded.content_hash,
+            "chunk_count": stmt.excluded.chunk_count,
+            "status": stmt.excluded.status,
+            "status_detail": stmt.excluded.status_detail,
+        },
+    )
+    await session.execute(stmt)
+    await session.commit()
+
+
 async def ingest_content(
     session: AsyncSession,
     model: RagModel,
@@ -101,6 +139,12 @@ async def ingest_content(
         )
         chunk_ms = round((time.perf_counter() - t_chunk) * 1000)
         if not chunks:
+            # Old chunks were already deleted above, so the source must be
+            # recorded as finished — otherwise it sits at "pending" forever and
+            # a reingest never resolves it.
+            await _record_empty_source(
+                session, model, source_identifier, content_hash, source_url, content_type
+            )
             return IngestResult(chunk_count=0, skipped=False, embedding_cost=0.0, chunk_ms=chunk_ms)
 
         # Embed all chunks

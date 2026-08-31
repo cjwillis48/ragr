@@ -30,7 +30,6 @@ class ContentChunk(Base):
 
     __table_args__ = (
         Index("ix_content_chunks_search_vector", "search_vector", postgresql_using="gin"),
-        Index("ix_content_chunks_model_source", "model_id", "source_identifier"),
         Index("ix_content_chunks_model_source_position", "model_id", "source_identifier", "position"),
     )
 

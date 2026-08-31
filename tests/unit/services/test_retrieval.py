@@ -145,33 +145,34 @@ class TestExpandNeighbours:
     async def test_radius_zero_is_a_no_op(self):
         hits = [_positioned(10, "doc", 5)]
         session = _session_returning([])
-        assert await _expand_neighbours(session, _model(0), hits) == hits
+        assert await _expand_neighbours(session, _model(0), hits) == (hits, set())
         session.execute.assert_not_called()
 
     async def test_empty_hits_short_circuits(self):
         session = _session_returning([])
-        assert await _expand_neighbours(session, _model(1), []) == []
+        assert await _expand_neighbours(session, _model(1), []) == ([], set())
         session.execute.assert_not_called()
 
     async def test_neighbours_surround_their_hit_in_order(self):
         hit = _positioned(10, "doc", 5)
         before, after = _positioned(9, "doc", 4), _positioned(11, "doc", 6)
         session = _session_returning([after, before])  # DB order is arbitrary
-        out = await _expand_neighbours(session, _model(1), [hit])
+        out, added = await _expand_neighbours(session, _model(1), [hit])
         assert [c.id for c in out] == [9, 10, 11]
+        assert added == {9, 11}, "hits must not be reported as neighbours"
 
     async def test_missing_neighbour_is_skipped(self):
         """Position 0 has no predecessor; the hit still comes back."""
         hit = _positioned(10, "doc", 0)
         session = _session_returning([_positioned(11, "doc", 1)])
-        out = await _expand_neighbours(session, _model(1), [hit])
+        out, added = await _expand_neighbours(session, _model(1), [hit])
         assert [c.id for c in out] == [10, 11]
 
     async def test_adjacent_hits_do_not_duplicate_shared_neighbours(self):
         a, b = _positioned(10, "doc", 5), _positioned(12, "doc", 7)
         shared = _positioned(11, "doc", 6)
         session = _session_returning([shared, _positioned(9, "doc", 4), _positioned(13, "doc", 8)])
-        out = await _expand_neighbours(session, _model(1), [a, b])
+        out, added = await _expand_neighbours(session, _model(1), [a, b])
         assert [c.id for c in out] == [9, 10, 11, 12, 13]
         assert len(out) == len(set(c.id for c in out))
 
@@ -180,7 +181,7 @@ class TestExpandNeighbours:
         hit_a = _positioned(10, "doc-a", 3)
         hit_b = _positioned(20, "doc-b", 3)
         session = _session_returning([])
-        out = await _expand_neighbours(session, _model(1), [hit_a, hit_b])
+        out, added = await _expand_neighbours(session, _model(1), [hit_a, hit_b])
         assert [c.id for c in out] == [10, 20]
         wanted = session.execute.call_args[0][0]
         assert wanted is not None  # query built without raising on mixed sources
@@ -188,5 +189,16 @@ class TestExpandNeighbours:
     async def test_hits_are_never_displaced_by_neighbours(self):
         hits = [_positioned(10, "doc", 5), _positioned(30, "doc", 20)]
         session = _session_returning([_positioned(31, "doc", 21)])
-        out = await _expand_neighbours(session, _model(1), hits)
+        out, added = await _expand_neighbours(session, _model(1), hits)
         assert out.index(hits[0]) < out.index(hits[1])
+
+
+class TestNeighbourScoring:
+    def test_neighbour_reports_its_own_retrieval_method(self):
+        """A neighbour was not matched by vector or keyword search; reporting it
+        as 'vector' off a fabricated distance of 1.0 misleads the caller."""
+        assert ChunkScore(chunk_id=1, distance=1.0, is_neighbor=True).retrieval_method == "neighbor"
+
+    def test_real_hits_are_unaffected(self):
+        assert ChunkScore(chunk_id=1, distance=0.4).retrieval_method == "vector"
+        assert ChunkScore(chunk_id=1, distance=0.4, keyword_rank=2).retrieval_method == "hybrid"

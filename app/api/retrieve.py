@@ -62,7 +62,7 @@ async def retrieve(
 
     t0 = time.perf_counter()
     try:
-        result = await retrieve_with_threshold(session, model, body.query)
+        result = await retrieve_with_threshold(session, model, body.query, limit=body.top_k)
     except httpx.TimeoutException:
         logger.error("embedding_timeout")
         raise HTTPException(status_code=503, detail="Embedding service timed out. Please try again.")
@@ -70,8 +70,10 @@ async def retrieve(
         logger.exception("retrieve_failed")
         raise HTTPException(status_code=503, detail="Retrieval service unavailable. Please try again.")
 
-    chunks = result.chunks[: body.top_k]
-    scores = result.scores[: body.top_k]
+    # top_k is applied inside retrieval, before neighbour expansion — slicing
+    # here would discard reranked hits in favour of their neighbours.
+    chunks = result.chunks
+    scores = result.scores
 
     embed_cost = estimate_embedding_cost(model.embedding_model, result.embed_tokens)
     rerank_cost = estimate_rerank_cost(model.rerank_model, result.rerank_tokens) if result.rerank_tokens else 0.0

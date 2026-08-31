@@ -184,3 +184,56 @@ class TestOverlapTail:
 
     def test_prefers_a_sentence_start(self):
         assert _overlap_tail("One ends here. Two begins now.", 20) == "Two begins now."
+
+
+class TestFencedCodeBlocks:
+    DOC = """# Install
+
+Run this:
+
+```bash
+# install the package
+pip install ragr
+
+# then start it
+ragr serve
+```
+
+Then read the docs.
+"""
+
+    def test_comment_in_fence_is_not_a_heading(self):
+        """A shell comment inside a fence must not open a section."""
+        paths = {tuple(c.heading_path) for c in chunk_text(self.DOC, 2000, 0)}
+        assert paths == {("Install",)}
+        assert not any("install the package" in p for path in paths for p in path)
+
+    def test_fence_stays_in_one_block(self):
+        """A blank line inside a fence is not a paragraph break."""
+        chunks = chunk_text(self.DOC, 2000, 0)
+        body = "\n".join(c.text for c in chunks)
+        assert "# install the package\npip install ragr\n\n# then start it" in body
+
+    def test_tilde_fences_handled(self):
+        doc = "# T\n\n~~~python\n# a comment\nx = 1\n~~~\n\nAfter.\n"
+        paths = {tuple(c.heading_path) for c in chunk_text(doc, 1000, 0)}
+        assert paths == {("T",)}
+
+    def test_headings_after_a_fence_still_work(self):
+        doc = self.DOC + "\n## Next Section\n\nMore text.\n"
+        paths = {tuple(c.heading_path) for c in chunk_text(doc, 400, 0)}
+        assert ("Install", "Next Section") in paths
+
+
+class TestPermalinkGlyphs:
+    def test_pilcrow_stripped_from_heading_path(self):
+        """MkDocs and Sphinx append a permalink glyph to every heading."""
+        chunks = chunk_text("## Overview¶\n\nBody text here.", 500, 0)
+        assert chunks[0].heading_path == ["Overview"]
+
+    def test_hash_and_section_glyphs_stripped(self):
+        assert chunk_text("## Setup #\n\nText.", 500, 0)[0].heading_path == ["Setup"]
+        assert chunk_text("## Setup §\n\nText.", 500, 0)[0].heading_path == ["Setup"]
+
+    def test_ordinary_heading_text_untouched(self):
+        assert chunk_text("## C# and F#\n\nText.", 500, 0)[0].heading_path == ["C# and F"]

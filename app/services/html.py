@@ -7,13 +7,15 @@ from markdownify import markdownify
 from selectolax.lexbor import LexborHTMLParser
 
 _BOILERPLATE_TAGS = [
-    "script", "style", "nav", "footer", "head", "aside", "form", "header", "noscript",
+    "script", "style", "nav", "footer", "head", "aside", "form", "noscript",
 ]
 
 # Wrappers that carry navigation, infoboxes and citation scaffolding rather than
 # prose. Left in, they chunk into hundreds of one-word fragments.
 _BOILERPLATE_SELECTORS = [
     ".navbox", ".infobox", ".sidebar", ".metadata", ".mw-editsection",
+    # Permalink glyphs MkDocs/Sphinx append to headings ("Overview\u00b6").
+    ".headerlink", ".anchor", ".hash-link",
     ".reference", ".mw-references-wrap", ".reflist", ".toc", ".hatnote",
     "[role=navigation]", "[role=complementary]", "[role=banner]",
 ]
@@ -38,7 +40,14 @@ def _to_markdown(tree: LexborHTMLParser) -> str:
     root = tree.body or tree.root
     if root is None:
         return ""
-    text = markdownify(root.html or "", heading_style="ATX", strip=["a", "img"])
+    text = markdownify(
+        root.html or "",
+        heading_style="ATX",
+        strip=["a", "img"],
+        escape_asterisks=False,
+        escape_underscores=False,
+        escape_misc=False,
+    )
     return _EXCESS_BLANK_LINES.sub("\n\n", text).strip()
 
 

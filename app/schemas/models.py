@@ -38,6 +38,7 @@ SUPPORTED_EMBEDDING_MODELS: set[str] = {
 SUPPORTED_GENERATION_MODELS: set[str] = {
     "claude-haiku-4-5",
     "claude-sonnet-5",
+    "claude-sonnet-4-6",
     "claude-opus-4-6",
     "claude-opus-4-7",
     "claude-opus-4-8",

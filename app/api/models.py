@@ -71,6 +71,7 @@ async def create_model(
         chunk_overlap=body.chunk_overlap if body.chunk_overlap is not None else settings.default_chunk_overlap,
         similarity_threshold=body.similarity_threshold if body.similarity_threshold is not None else settings.default_similarity_threshold,
         top_k=body.top_k if body.top_k is not None else settings.default_top_k,
+        neighbor_radius=body.neighbor_radius if body.neighbor_radius is not None else 0,
         embedding_model=body.embedding_model or settings.default_embedding_model,
         generation_model=body.generation_model or settings.default_generation_model,
         reranker_enabled=body.reranker_enabled if body.reranker_enabled is not None else settings.default_reranker_enabled,

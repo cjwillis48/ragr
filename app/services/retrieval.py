@@ -26,10 +26,13 @@ class ChunkScore:
     distance: float
     rerank_score: float | None = None
     keyword_rank: int | None = None
+    is_neighbor: bool = False
 
     @property
     def retrieval_method(self) -> str:
         """How this chunk was retrieved (reranker is orthogonal — just re-orders)."""
+        if self.is_neighbor:
+            return "neighbor"
         has_vector = self.distance < 1.0
         has_keyword = self.keyword_rank is not None
         if has_vector and has_keyword:
@@ -161,14 +164,14 @@ async def _expand_neighbours(
     session: AsyncSession,
     model: RagModel,
     chunks: list[ContentChunk],
-) -> list[ContentChunk]:
+) -> tuple[list[ContentChunk], set[int]]:
     """Pull each hit's adjacent chunks back in, so context split across a
     boundary arrives whole. Neighbours are inserted next to the hit that pulled
     them in, preserving rank order; the hits themselves are never displaced.
     """
     radius = model.neighbor_radius or 0
     if radius <= 0 or not chunks:
-        return chunks
+        return chunks, set()
 
     wanted = {
         (c.source_identifier, c.position + offset)
@@ -179,7 +182,7 @@ async def _expand_neighbours(
     have = {(c.source_identifier, c.position) for c in chunks}
     wanted -= have
     if not wanted:
-        return chunks
+        return chunks, set()
 
     rows = (await session.execute(
         select(ContentChunk).where(
@@ -200,13 +203,15 @@ async def _expand_neighbours(
             if neighbour is not None and neighbour.id not in seen:
                 seen.add(neighbour.id)
                 expanded.append(neighbour)
-    return expanded
+    added = {c.id for c in expanded} - {c.id for c in chunks}
+    return expanded, added
 
 
 async def retrieve_with_threshold(
     session: AsyncSession,
     model: RagModel,
     query: str,
+    limit: int | None = None,
 ) -> RetrievalResult:
     """Hybrid retrieval: vector similarity + keyword search merged with RRF.
 
@@ -239,7 +244,11 @@ async def retrieve_with_threshold(
     })
 
     chunks, rerank_scores, rerank_tokens = await _rerank_chunks(model, query, chunks)
-    chunks = await _expand_neighbours(session, model, chunks)
+    # Apply the caller's cutoff to genuine hits first. Expanding then truncating
+    # would let neighbours push real reranked hits out of the result.
+    if limit is not None:
+        chunks = chunks[:limit]
+    chunks, neighbour_ids = await _expand_neighbours(session, model, chunks)
 
     scores = [
         ChunkScore(
@@ -247,6 +256,7 @@ async def retrieve_with_threshold(
             distance=round(distances[c.id], 4) if c.id in distances else 1.0,
             rerank_score=round(rerank_scores[c.id], 4) if c.id in rerank_scores else None,
             keyword_rank=keyword_ranks.get(c.id),
+            is_neighbor=c.id in neighbour_ids,
         )
         for c in chunks
     ]

@@ -10,6 +10,9 @@ import re
 from dataclasses import dataclass, field
 
 _HEADING = re.compile(r"^(#{1,6})\s+(\S.*)$")
+_FENCE = re.compile(r"^(```|~~~)")
+# Permalink glyphs that survive extraction and would end up in heading_path.
+_PERMALINK_SUFFIX = re.compile(r"[\s\u00b6#\u00a7]+$")
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 
 
@@ -58,15 +61,34 @@ def _parse_blocks(text: str) -> list[_Block]:
                 blocks.append(_Block(joined, buffer_start, tuple(t for _, t in stack)))
             buffer = []
 
+    in_fence = False
+
     for line in text.splitlines(keepends=True):
         bare = line.strip()
+
+        # Inside a fenced code block nothing is markup: a shell comment is not a
+        # heading, and a blank line is not a paragraph break.
+        if _FENCE.match(bare):
+            in_fence = not in_fence
+            if not buffer:
+                buffer_start = offset
+            buffer.append(line.rstrip("\n"))
+            offset += len(line)
+            continue
+        if in_fence:
+            if not buffer:
+                buffer_start = offset
+            buffer.append(line.rstrip("\n"))
+            offset += len(line)
+            continue
+
         heading = _HEADING.match(bare)
         if heading:
             flush()
             level = len(heading.group(1))
             while stack and stack[-1][0] >= level:
                 stack.pop()
-            stack.append((level, heading.group(2).strip()))
+            stack.append((level, _PERMALINK_SUFFIX.sub("", heading.group(2)).strip()))
             blocks.append(_Block(bare, offset, tuple(t for _, t in stack), is_heading=True))
         elif not bare:
             flush()

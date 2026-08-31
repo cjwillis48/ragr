@@ -29,14 +29,41 @@ class TestStripHtml:
 
     def test_boilerplate_tags_removed(self):
         html = (
-            "<body><nav>Home About</nav><header>Site</header>"
+            "<body><nav>Home About</nav>"
             "<p>Real content.</p>"
             "<aside>Sidebar</aside><footer>Copyright</footer></body>"
         )
         out = strip_html(html)
         assert "Real content." in out
-        for junk in ("Home About", "Site", "Sidebar", "Copyright"):
+        for junk in ("Home About", "Sidebar", "Copyright"):
             assert junk not in out
+
+    def test_header_is_kept_because_it_holds_the_article_title(self):
+        """HTML5 templates put the article <h1> inside <header>; dropping the
+        tag wholesale deletes the title of every Hugo/Jekyll/Docusaurus page."""
+        html = "<body><header><h1>How to Deploy RAGr</h1></header><p>Body text.</p></body>"
+        out = strip_html(html)
+        assert "# How to Deploy RAGr" in out
+        assert "Body text." in out
+
+    def test_site_chrome_removed_by_banner_role(self):
+        """Site-level headers are identified by role=banner, not by the tag."""
+        html = '<body><header role="banner">Login Signup</header><p>Body text.</p></body>'
+        out = strip_html(html)
+        assert "Body text." in out
+        assert "Login" not in out
+
+    def test_identifiers_are_not_backslash_escaped(self):
+        """markdownify escapes _ and * by default, which corrupts the stored
+        text, the tsvector built from it, and what Claude reads."""
+        html = "<body><p>Set MAX_UPLOAD_SIZE_MB and pass *args to my_function.</p></body>"
+        out = strip_html(html)
+        assert out == "Set MAX_UPLOAD_SIZE_MB and pass *args to my_function."
+        assert "\\" not in out
+
+    def test_snake_case_survives_in_code_and_prose(self):
+        html = "<body><p>Use <code>chunk_overlap</code> with <code>chunk_size</code>.</p></body>"
+        assert "\\" not in strip_html(html)
 
     def test_navigation_containers_removed_by_class(self):
         html = (
