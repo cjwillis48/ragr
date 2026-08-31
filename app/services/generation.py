@@ -25,7 +25,29 @@ class GenerationResult:
 
 logger = logging.getLogger("ragr.generation")
 
-_META_RE = re.compile(r'\s*<meta\s+status="(answered|unanswered|off_topic)"\s*/>\s*$')
+_STATUS_TOOL = [{
+    "name": "set_status",
+    "description": (
+        "Record how you handled the user's question. "
+        "Call this exactly once, after you have finished writing your reply."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "status": {
+                "type": "string",
+                "enum": ["answered", "unanswered", "off_topic"],
+                "description": (
+                    "answered: you answered from the knowledge, or handled a greeting or small talk. "
+                    "unanswered: in-scope for your domain but the knowledge doesn't cover it. "
+                    "off_topic: substantive but unrelated to your domain (never for greetings)."
+                ),
+            }
+        },
+        "required": ["status"],
+        "additionalProperties": False,
+    },
+}]
 
 _clients = ClientCache(
     platform_factory=lambda: anthropic.AsyncAnthropic(
@@ -70,17 +92,14 @@ def _build_prompt(
         "3. Never offer to help outside what you know. Do not say things like "
         "\"I can work through it from first principles\" or \"I'd be happy to figure it out.\"\n"
         "4. If you cannot answer from the provided knowledge, politely decline in your own voice and style.\n"
-        "5. After your complete response, on a new line, output exactly one of these tags:\n"
-        '   <meta status="answered" /> — you answered the question using the knowledge, or you handled a greeting or small talk\n'
-        '   <meta status="unanswered" /> — the question is in-scope for your domain but the knowledge doesn\'t cover it\n'
-        '   <meta status="off_topic" /> — the question is substantive but has nothing to do with your domain (never use this for greetings)\n'
-        "   The user will never see this tag. It is for internal tracking only."
+        "5. After you finish writing your reply, call the set_status tool exactly once to record "
+        "how you handled the question. The user never sees this call."
     )
     # Structured block so Anthropic can cache the system prompt across requests.
     system = [{"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}}]
 
     # Strip internal tags from user input to prevent prompt injection
-    sanitized_message = re.sub(r"</?knowledge[^>]*>|<meta\s[^>]*/?>", "", message)
+    sanitized_message = re.sub(r"</?knowledge[^>]*>", "", message)
 
     user_message = (
         f"<knowledge>\n{context}\n</knowledge>\n\n"
@@ -96,17 +115,18 @@ def _build_prompt(
     return system, messages
 
 
-def _parse_meta(raw: str) -> tuple[str, str]:
-    """Strip the <meta /> tag and return (clean_response, status).
+def _read_response(content: list) -> tuple[str, str]:
+    """Pull the reply text and set_status value out of the response blocks.
 
-    Falls back to 'answered' if the model omits the tag.
+    Falls back to 'answered' if the model skipped the tool call.
     """
-    match = _META_RE.search(raw)
-    if match:
-        status = match.group(1)
-        clean = raw[: match.start()].rstrip()
-        return clean, status
-    return raw.strip(), "answered"
+    text = "".join(b.text for b in content if b.type == "text").strip()
+    status = next(
+        (b.input.get("status") for b in content
+         if b.type == "tool_use" and b.name == "set_status"),
+        "answered",
+    )
+    return text, status
 
 
 async def generate_answer(
@@ -128,6 +148,7 @@ async def generate_answer(
             max_tokens=model.max_tokens,
             system=system,
             messages=messages,
+            tools=_STATUS_TOOL,
         )
 
         usage = api_response.usage
@@ -141,8 +162,7 @@ async def generate_answer(
             "cache_read": getattr(usage, "cache_read_input_tokens", 0) or 0,
         })
 
-    raw = api_response.content[0].text
-    response_text, status = _parse_meta(raw)
+    response_text, status = _read_response(api_response.content)
 
     return GenerationResult(
         response=response_text,
@@ -167,15 +187,11 @@ async def generate_answer_stream(
 
     client = get_client(model.custom_anthropic_key)
     full_response = ""
+    status = "answered"
     input_tokens = 0
     output_tokens = 0
     t_start = time.perf_counter()
     t_first_token: float | None = None
-
-    # Buffer tokens once we suspect the <meta> tag is starting so it
-    # never gets streamed to the client.
-    buffer = ""
-    meta_prefix = "<meta"
 
     try:
         with tracer.start_as_current_span(
@@ -187,42 +203,18 @@ async def generate_answer_stream(
                 max_tokens=model.max_tokens,
                 system=system,
                 messages=messages,
+                tools=_STATUS_TOOL,
             ) as stream:
                 async for text in stream.text_stream:
                     if t_first_token is None:
                         t_first_token = time.perf_counter()
                         logger.info("first_token", extra={"duration_ms": round((t_first_token - t_start) * 1000)})
                     full_response += text
-                    buffer += text
-
-                    # Find where a potential <meta tag could start — look for '<'
-                    # that could be the beginning of '<meta status=...'
-                    tag_start = buffer.find("<")
-                    if tag_start == -1:
-                        # No '<' at all — safe to flush everything
-                        yield buffer
-                        buffer = ""
-                    else:
-                        # Flush everything before the '<'
-                        if tag_start > 0:
-                            yield buffer[:tag_start]
-                            buffer = buffer[tag_start:]
-
-                        # Check if buffer so far could still be a prefix of <meta
-                        if meta_prefix.startswith(buffer) or buffer.startswith(meta_prefix):
-                            # Still ambiguous — keep buffering
-                            pass
-                        else:
-                            # It's not <meta, flush it
-                            yield buffer
-                            buffer = ""
-
-                # Stream done — flush anything buffered that isn't the meta tag
-                if buffer and not _META_RE.search(buffer):
-                    yield buffer
+                    yield text
 
                 try:
                     final = await stream.get_final_message()
+                    _, status = _read_response(final.content)
                     usage = final.usage
                     input_tokens = usage.input_tokens
                     output_tokens = usage.output_tokens
@@ -243,9 +235,8 @@ async def generate_answer_stream(
         # Let errors propagate so callers (_stream_response) can send proper SSE error events
         raise
 
-    response_text, status = _parse_meta(full_response)
     yield GenerationResult(
-        response=response_text,
+        response=full_response.strip(),
         status=status,
         input_tokens=input_tokens,
         output_tokens=output_tokens,
