@@ -187,6 +187,7 @@ async def ingest_content(
             source_url=source_url,
             content_type=content_type,
             status="complete",
+            status_detail=None,
             embedding_cost=embedding_cost,
             raw_content=content,
         )
@@ -198,6 +199,7 @@ async def ingest_content(
                 "source_url": stmt.excluded.source_url,
                 "content_type": stmt.excluded.content_type,
                 "status": stmt.excluded.status,
+                "status_detail": stmt.excluded.status_detail,
                 "embedding_cost": stmt.excluded.embedding_cost,
                 "raw_content": stmt.excluded.raw_content,
             },

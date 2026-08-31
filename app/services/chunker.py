@@ -190,7 +190,10 @@ def _merge_into_chunks(
             continue
 
         candidate = "\n\n".join(b.text for b in current + [block])
-        if len(seed) + len(candidate) + 2 <= chunk_size or not current:
+        # A run of headings alone is not a chunk: keep collecting until real
+        # prose arrives, even if that overshoots chunk_size by the heading.
+        heading_only = bool(current) and all(b.is_heading for b in current)
+        if len(seed) + len(candidate) + 2 <= chunk_size or not current or heading_only:
             current.append(block)
             continue
 

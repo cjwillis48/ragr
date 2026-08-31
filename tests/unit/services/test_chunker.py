@@ -237,3 +237,25 @@ class TestPermalinkGlyphs:
 
     def test_ordinary_heading_text_untouched(self):
         assert chunk_text("## C# and F#\n\nText.", 500, 0)[0].heading_path == ["C# and F"]
+
+
+class TestNoOrphanHeadings:
+    def test_heading_stays_with_content_it_cannot_fit(self):
+        """A heading emitted alone is the junk-chunk class this module exists to
+        prevent — better to overshoot chunk_size by the heading's length."""
+        doc = "## Configuration\n\n" + ("The chunk_size setting controls output. " * 6)
+        chunks = chunk_text(doc, 200, 0)
+        assert chunks[0].text.startswith("## Configuration")
+        assert len(chunks[0].text) > len("## Configuration")
+
+    def test_no_chunk_is_only_headings_at_any_size(self):
+        doc = (
+            "# Top\n\n## A\n\n### B\n\n" + ("Body prose here. " * 30)
+            + "\n\n## C\n\n" + ("More prose follows. " * 30)
+        )
+        for size in (120, 300, 1000):
+            for chunk in chunk_text(doc, size, 0):
+                lines = [ln for ln in chunk.text.splitlines() if ln.strip()]
+                assert not all(ln.lstrip().startswith("#") for ln in lines), (
+                    f"orphan heading chunk at size={size}: {chunk.text!r}"
+                )

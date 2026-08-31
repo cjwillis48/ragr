@@ -1,5 +1,5 @@
+import asyncio
 import logging
-from pathlib import Path
 import time
 
 
@@ -35,7 +35,6 @@ from app.schemas.sources import (
 )
 from app.services.crawler import normalize_url
 from app.services.extract import ExtractionError, extract_text
-from app.services.html import strip_html
 from app.services.ingest import ingest_content
 from app.services.r2 import is_configured as r2_is_configured
 from app.services.rate_limit import RateLimiter
@@ -374,7 +373,7 @@ async def upload_source(
             )
         t_read = time.monotonic()
         try:
-            text, content_type = extract_text(file.filename, raw)
+            text, content_type = await asyncio.to_thread(extract_text, file.filename, raw)
         except ExtractionError as e:
             raise HTTPException(status_code=422, detail=str(e))
         t_extract = time.monotonic()
