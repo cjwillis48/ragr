@@ -264,11 +264,14 @@ async def handle_r2_file_job(job: IngestionJob) -> None:
 
 async def handle_crawl_job(job: IngestionJob) -> None:
     """Run the crawler and create child URL jobs for discovered pages."""
-    from app.services.crawler import CrawledPage, FailedPage, crawl_site
+    from app.services.crawler import CrawledPage, FailedPage, SkippedPage, crawl_site, explain_empty_crawl
 
     model_id = job.model_id
     params = job.job_params
     page_count = 0
+    seed_url = params["url"]
+    seed_reason: str | None = None
+    seed_detail: str | None = None
 
     async for item in crawl_site(
         root_url=params["url"],
@@ -292,7 +295,18 @@ async def handle_crawl_job(job: IngestionJob) -> None:
                 src = existing.scalar_one_or_none()
                 if src:
                     src.status = "failed"
+                    if item.url == seed_url:
+                        src.status_detail = explain_empty_crawl("fetch_failed", item.error)
                     await session.commit()
+            if item.url == seed_url:
+                seed_reason, seed_detail = "fetch_failed", item.error
+            continue
+
+        if isinstance(item, SkippedPage):
+            # Fetched fine, nothing to ingest. Only the seed's reason is worth
+            # reporting — a skipped link deep in a crawl is noise.
+            if item.url == seed_url:
+                seed_reason, seed_detail = item.reason, item.detail
             continue
 
         # CrawledPage — create pending source + child URL job
@@ -335,7 +349,12 @@ async def handle_crawl_job(job: IngestionJob) -> None:
         )
         root_src = root_result.scalar_one_or_none()
         if root_src:
-            root_src.status = "complete" if page_count > 0 else "failed"
+            if page_count > 0:
+                root_src.status = "complete"
+                root_src.status_detail = None
+            else:
+                root_src.status = "failed"
+                root_src.status_detail = explain_empty_crawl(seed_reason, seed_detail)
             await session.commit()
 
 

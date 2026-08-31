@@ -1,7 +1,9 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from app.services.crawler import normalize_url, crawl_site, CrawledPage, FailedPage
+from app.services.crawler import (
+    normalize_url, crawl_site, CrawledPage, FailedPage, SkippedPage, explain_empty_crawl,
+)
 from app.services.html import parse_html
 
 
@@ -173,3 +175,79 @@ class TestCrawlSite:
         assert "Hades" in pages[0].text
         mock_wp_fetch.assert_called_once_with("en", "Hades", timeout=30)
         mock_safe_get.assert_not_called()
+
+
+async def _collect_skipped(gen) -> list[SkippedPage]:
+    return [item async for item in gen if isinstance(item, SkippedPage)]
+
+
+class TestSkippedPages:
+    """A page that fetches fine but yields nothing must say why, not vanish."""
+
+    def _mock_response(self, text: str, content_type: str = "text/html", size: int = 100):
+        resp = MagicMock()
+        resp.text = text
+        resp.content = b"x" * size
+        resp.headers = {"content-type": content_type}
+        resp.status_code = 200
+        resp.raise_for_status = MagicMock()
+        return resp
+
+    async def test_client_rendered_shell_reports_empty_render(self):
+        """The bucktoof.net case: real SPA shell — no text, no links."""
+        html = (
+            '<!doctype html><html><head><title>bucktoof</title></head>'
+            '<body><div id="root"></div><script src="/assets/index.js"></script></body></html>'
+        )
+        mock_get = AsyncMock(return_value=self._mock_response(html))
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr("app.services.crawler.safe_get", mock_get)
+            skipped = await _collect_skipped(crawl_site("https://bucktoof.net"))
+
+        assert len(skipped) == 1
+        assert skipped[0].reason == "empty_render"
+        assert skipped[0].url == "https://bucktoof.net/"
+
+    async def test_thin_page_with_links_is_not_empty_render(self):
+        """Links present means the server rendered something — thin, not an SPA."""
+        html = '<html><body><p>Hi</p><a href="/about">About</a></body></html>'
+        mock_get = AsyncMock(return_value=self._mock_response(html))
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr("app.services.crawler.safe_get", mock_get)
+            skipped = await _collect_skipped(crawl_site("https://example.com", max_pages=1))
+
+        assert [s.reason for s in skipped] == ["thin"]
+
+    async def test_non_html_reports_content_type(self):
+        mock_get = AsyncMock(return_value=self._mock_response("%PDF", content_type="application/pdf"))
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr("app.services.crawler.safe_get", mock_get)
+            skipped = await _collect_skipped(crawl_site("https://example.com"))
+
+        assert skipped[0].reason == "not_html"
+        assert "pdf" in skipped[0].detail
+
+    async def test_oversized_reports_size(self):
+        mock_get = AsyncMock(return_value=self._mock_response("<html></html>", size=11 * 1024 * 1024))
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr("app.services.crawler.safe_get", mock_get)
+            skipped = await _collect_skipped(crawl_site("https://example.com"))
+
+        assert skipped[0].reason == "oversized"
+
+
+class TestExplainEmptyCrawl:
+    def test_empty_render_names_javascript_and_says_what_to_do(self):
+        msg = explain_empty_crawl("empty_render")
+        assert "JavaScript" in msg
+        assert "directly" in msg
+
+    def test_fetch_failed_includes_the_error(self):
+        assert "connection refused" in explain_empty_crawl("fetch_failed", "connection refused")
+
+    def test_unknown_reason_still_returns_a_message(self):
+        assert explain_empty_crawl(None)
