@@ -24,6 +24,7 @@ class IngestionSource(Base):
     status: Mapped[str] = mapped_column(String(16), server_default="complete", nullable=False)
     embedding_cost: Mapped[float] = mapped_column(Float, server_default="0", nullable=False)
     raw_content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     ingested_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

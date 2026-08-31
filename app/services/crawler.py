@@ -31,6 +31,20 @@ class FailedPage:
     error: str
 
 
+@dataclass
+class SkippedPage:
+    """A page fetched successfully but not ingested, and why.
+
+    Distinct from FailedPage: nothing went wrong on the wire. The most common
+    reason is `empty_render` — the fetch returned HTML with no text and no
+    links, which is what a client-side rendered app looks like to a crawler
+    that does not run JavaScript.
+    """
+    url: str
+    reason: str  # not_html | oversized | empty_render | thin
+    detail: str | None = None
+
+
 def normalize_url(url: str) -> str:
     """Canonical form for dedup: strip fragment, ensure exactly one path slash.
 
@@ -88,6 +102,7 @@ async def crawl_site(
     queue: deque[tuple[str, int]] = deque()
     page_count = 0
     failed_count = 0
+    skipped_count = 0
 
     start = normalize_url(root_url)
     queue.append((start, 0))
@@ -128,11 +143,11 @@ async def crawl_site(
 
             if len(resp.content) > 10 * 1024 * 1024:
                 logger.warning("crawl_page_oversized", extra={"url": url, "bytes": len(resp.content)})
-                return None
+                return SkippedPage(url=url, reason="oversized", detail=f"{len(resp.content) // (1024 * 1024)} MB")
 
             content_type_header = resp.headers.get("content-type", "")
             if "html" not in content_type_header:
-                return None
+                return SkippedPage(url=url, reason="not_html", detail=content_type_header or "unknown")
 
             t_parse = _time.perf_counter()
             raw_html = resp.text
@@ -140,7 +155,10 @@ async def crawl_site(
             parse_ms = round((_time.perf_counter() - t_parse) * 1000)
 
             if not text or len(text) < 50:
-                return None
+                # No text AND no links means nothing was server-rendered at all —
+                # the signature of a client-side app, not of a thin page.
+                reason = "empty_render" if not links else "thin"
+                return SkippedPage(url=url, reason=reason, detail=f"{len(text)} chars")
 
             return (CrawledPage(url=url, text=text, content_type="html"), links, depth, fetch_ms, parse_ms)
 
@@ -154,6 +172,11 @@ async def crawl_site(
                 continue
             if isinstance(result, FailedPage):
                 failed_count += 1
+                yield result
+                continue
+            if isinstance(result, SkippedPage):
+                skipped_count += 1
+                logger.info("crawl_page_skipped", extra={"url": result.url, "reason": result.reason, "detail": result.detail})
                 yield result
                 continue
 
@@ -186,4 +209,26 @@ async def crawl_site(
             })
             yield page
 
-    logger.info("crawl_complete", extra={"pages": page_count, "failed": failed_count, "root_url": root_url})
+    logger.info("crawl_complete", extra={"pages": page_count, "failed": failed_count, "skipped": skipped_count, "root_url": root_url})
+
+
+def explain_empty_crawl(reason: str | None, detail: str | None = None) -> str:
+    """Human-readable reason a crawl ingested nothing, for the console.
+
+    Lives next to the reason strings so the copy can't drift from the codes.
+    """
+    if reason == "empty_render":
+        return (
+            "Fetched the page successfully, but it contained no readable text and no links. "
+            "This site renders its content in the browser (a JavaScript app), and RAGr reads "
+            "only the HTML the server sends. Add your content directly instead."
+        )
+    if reason == "thin":
+        return f"Fetched the page, but it had too little readable text to index ({detail})."
+    if reason == "not_html":
+        return f"The URL returned {detail}, not an HTML page."
+    if reason == "oversized":
+        return f"The page was larger than the 10 MB limit ({detail})."
+    if reason == "fetch_failed":
+        return f"Could not fetch the page: {detail}"
+    return "The crawl finished without finding any readable pages."

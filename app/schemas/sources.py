@@ -9,6 +9,7 @@ class SourceResponse(BaseModel):
     source_url: str
     content_type: str
     status: str
+    status_detail: str | None = None
     chunk_count: int
     embedding_cost: float
     ingested_at: datetime
