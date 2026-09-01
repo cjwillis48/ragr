@@ -131,3 +131,33 @@ class TestParseHtml:
         text, links = parse_html(html, "https://example.com/", "example.com", None)
         assert "https://example.com/hidden" in links
         assert "Hidden" not in text
+
+
+class TestAdjacentInlineElements:
+    """Tag chips, badges and breadcrumbs are written as adjacent inline elements
+    with no whitespace between them. Converted naively they glue into one token
+    that no keyword search can match."""
+
+    def test_adjacent_chips_are_separated(self):
+        html = (
+            '<body><p><span class="chip">Python</span>'
+            '<span class="chip">Java</span>'
+            '<span class="chip">Kafka</span></p></body>'
+        )
+        assert strip_html(html) == "Python Java Kafka"
+
+    def test_glued_token_would_break_keyword_search(self):
+        html = "<body><p><span>DynamoDB</span><span>Python</span></p></body>"
+        assert "Python" in strip_html(html).split()
+
+    def test_tag_wrapped_punctuation_gains_no_space(self):
+        html = "<body><p>See <em>this</em><span>,</span> ok.</p></body>"
+        assert strip_html(html) == "See *this*, ok."
+
+    def test_ordinary_inline_sentence_unaffected(self):
+        html = '<body><p>Costs $10 per <a href="/x">month</a> for the starter plan.</p></body>'
+        assert strip_html(html) == "Costs $10 per month for the starter plan."
+
+    def test_whitespace_already_present_is_not_doubled(self):
+        html = "<body><p><span>alpha</span> <span>beta</span></p></body>"
+        assert strip_html(html) == "alpha beta"

@@ -22,6 +22,17 @@ _BOILERPLATE_SELECTORS = [
 
 _EXCESS_BLANK_LINES = re.compile(r"\n{3,}")
 
+# Inline elements written adjacently with no whitespace between them — tag
+# chips, badges, breadcrumbs — otherwise convert to one glued token
+# ("PythonJavaTypeScript"), which no keyword search will ever match.
+_INLINE_TAGS = "span|a|code|em|strong|b|i|small|abbr|kbd|sup|sub|mark|q|cite|time|label"
+# Only when the next element opens with a word character — so chips get
+# separated but tag-wrapped punctuation ("</em><span>,</span>") does not
+# gain a space before it.
+_ADJACENT_INLINE = re.compile(
+    rf"</(?:{_INLINE_TAGS})>(?=<[a-zA-Z][^>]*>[A-Za-z0-9])"
+)
+
 
 def _strip_boilerplate(tree: LexborHTMLParser) -> None:
     for selector in _BOILERPLATE_TAGS + _BOILERPLATE_SELECTORS:
@@ -40,8 +51,9 @@ def _to_markdown(tree: LexborHTMLParser) -> str:
     root = tree.body or tree.root
     if root is None:
         return ""
+    html = _ADJACENT_INLINE.sub(lambda m: f"{m.group(0)} ", root.html or "")
     text = markdownify(
-        root.html or "",
+        html,
         heading_style="ATX",
         strip=["a", "img"],
         escape_asterisks=False,

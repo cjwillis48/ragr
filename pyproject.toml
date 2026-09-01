@@ -1,6 +1,6 @@
 [project]
 name = "ragr"
-version = "0.10.0"
+version = "0.11.0"
 description = "Multi-tenant RAG platform"
 readme = "README.md"
 license = {text = "MIT"}
