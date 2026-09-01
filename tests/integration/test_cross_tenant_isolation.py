@@ -230,8 +230,8 @@ class TestRetrievalScoping:
         # Identical query embedding — both chunks would match if scoping were broken
         query_embedding = [0.1] * 1024
 
-        my_hits = await _vector_search(db_session, my_model, query_embedding, threshold_distance=2.0, limit=10)
-        other_hits = await _vector_search(db_session, other_tenant, query_embedding, threshold_distance=2.0, limit=10)
+        my_hits = await _vector_search(db_session, my_model, query_embedding, limit=10)
+        other_hits = await _vector_search(db_session, other_tenant, query_embedding, limit=10)
 
         my_contents = {c.content for c, _ in my_hits}
         other_contents = {c.content for c, _ in other_hits}

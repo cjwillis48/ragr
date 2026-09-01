@@ -17,11 +17,9 @@ def sample_model():
     model.system_prompt = "You are a test assistant."
     model.chunk_size = 1000
     model.chunk_overlap = 100
-    model.similarity_threshold = 0.3
     model.top_k = 15
     model.embedding_model = "voyage-4-lite"
     model.generation_model = "claude-haiku-4-5"
-    model.reranker_enabled = True
     model.rerank_model = "rerank-2.5-lite"
     model.rerank_candidates = 60
     model.rerank_threshold = 0.0

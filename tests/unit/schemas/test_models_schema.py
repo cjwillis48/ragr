@@ -27,7 +27,6 @@ class TestRagModelCreate:
             generation_model="claude-haiku-4-5",
             chunk_size=500,
             chunk_overlap=50,
-            similarity_threshold=0.5,
             top_k=10,
         )
         assert m.embedding_model == "voyage-4-lite"

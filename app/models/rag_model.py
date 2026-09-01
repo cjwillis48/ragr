@@ -39,11 +39,9 @@ class RagModel(Base):
 
     chunk_size: Mapped[int] = mapped_column(Integer, default=1000)
     chunk_overlap: Mapped[int] = mapped_column(Integer, default=100)
-    similarity_threshold: Mapped[float] = mapped_column(Float, default=0.3)
     top_k: Mapped[int] = mapped_column(Integer, default=15)
     embedding_model: Mapped[str] = mapped_column(String(100), nullable=False)
     generation_model: Mapped[str] = mapped_column(String(100), nullable=False)
-    reranker_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     rerank_model: Mapped[str] = mapped_column(String(100), default="rerank-2.5-lite")
     rerank_candidates: Mapped[int] = mapped_column(Integer, default=60)
     # Precision floor on rerank scores — the only relevance filter while reranking.

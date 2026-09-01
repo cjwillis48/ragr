@@ -90,11 +90,9 @@ class _RagModelFields(BaseModel):
             if self.chunk_overlap >= self.chunk_size:
                 raise ValueError("chunk_overlap must be less than chunk_size")
         return self
-    similarity_threshold: float | None = Field(None, ge=0.0, le=1.0)
     top_k: int | None = Field(None, ge=1, le=100)
     embedding_model: str | None = None
     generation_model: str | None = None
-    reranker_enabled: bool | None = None
     rerank_model: str | None = None
     rerank_candidates: int | None = Field(None, ge=1, le=500)
     rerank_threshold: float | None = Field(None, ge=0.0, le=1.0)
@@ -161,11 +159,9 @@ class RagModelRead(BaseModel):
     chat_theme: ChatTheme | None = None
     chunk_size: int
     chunk_overlap: int
-    similarity_threshold: float
     top_k: int
     embedding_model: str
     generation_model: str
-    reranker_enabled: bool
     rerank_model: str
     rerank_candidates: int
     rerank_threshold: float

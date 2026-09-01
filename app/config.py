@@ -27,7 +27,6 @@ class Settings(BaseSettings):
     max_upload_size_mb: int = 50
     max_upload_files: int = 20
 
-    default_similarity_threshold: float = 0.3
     default_chunk_size: int = 1000
     default_chunk_overlap: int = 100
     default_top_k: int = 15
@@ -37,7 +36,6 @@ class Settings(BaseSettings):
     default_rerank_model: str = "rerank-2.5-lite"
     default_rerank_candidates: int = 60
     default_rerank_threshold: float = 0.35
-    default_reranker_enabled: bool = True
     default_history_turns: int = 10
     default_hosted_chat: bool = True
     default_max_tokens: int = 1024
