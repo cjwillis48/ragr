@@ -2,6 +2,12 @@
 
 Establishes the baseline that later chunking changes are measured against.
 
+A golden is either single-turn ({"query": ...}) or multi-turn ({"turns": [...]}),
+where turns are the user's messages in order and the last one is what's asked.
+Retrieval runs on the last turn with the previous turn as embedding context,
+mirroring the /chat endpoint; --no-context retrieves on the bare last turn
+(pre-0.12.0 behaviour) for before/after comparison.
+
     uv run python tests/eval/eval_retrieval.py --model hades-bot
     uv run python tests/eval/eval_retrieval.py --model hades-bot --json runs/before.json
 
@@ -119,7 +125,7 @@ async def _corpus_health(session, model_id: int) -> dict:
     }
 
 
-async def run(slug: str, goldens_path: Path | None, k: int | None) -> EvalReport:
+async def run(slug: str, goldens_path: Path | None, k: int | None, no_context: bool = False) -> EvalReport:
     _init_engine()
     async with database.async_session() as session:
         model = (await session.execute(
@@ -141,8 +147,13 @@ async def run(slug: str, goldens_path: Path | None, k: int | None) -> EvalReport
         results: list[QueryResult] = []
         ctx_chars = ctx_junk = ctx_frags = 0
         for golden in goldens:
-            retrieval = await retrieve_with_threshold(session, model, golden["query"])
-            chunks = retrieval.chunks[:top_k]
+            turns = golden.get("turns") or [golden["query"]]
+            query = turns[-1]
+            context = turns[-2] if len(turns) > 1 and not no_context else None
+            # k applies inside retrieval, before neighbour expansion — slicing the
+            # result here would discard neighbours (see app/api/retrieve.py).
+            retrieval = await retrieve_with_threshold(session, model, query, limit=k, context=context)
+            chunks = retrieval.chunks
             # Quality of what actually reaches the generator: rank alone can look
             # perfect while the chunk itself is navigation debris.
             for chunk in chunks:
@@ -154,7 +165,7 @@ async def run(slug: str, goldens_path: Path | None, k: int | None) -> EvalReport
                 (i for i, c in enumerate(chunks, 1) if _matches(c, golden)), None
             )
             results.append(QueryResult(
-                query=golden["query"],
+                query=query,
                 hit_rank=rank,
                 retrieved=len(chunks),
                 top_source=chunks[0].source_identifier if chunks else "",
@@ -164,7 +175,10 @@ async def run(slug: str, goldens_path: Path | None, k: int | None) -> EvalReport
         if results:
             report.recall_at_k = round(sum(r.hit for r in results) / len(results), 3)
             report.mrr_at_k = round(sum(r.reciprocal_rank for r in results) / len(results), 3)
-        report.misses = [r.query for r in results if not r.hit]
+        report.misses = [
+            f"{r.query} [{g.get('expect_substring') or g.get('expect_source')}]"
+            for r, g in zip(results, goldens) if not r.hit
+        ]
         if ctx_chars:
             report.context = {
                 "chars": ctx_chars,
@@ -206,9 +220,11 @@ def main() -> None:
     ap.add_argument("--goldens", type=Path, help=f"default: {GOLDENS_DIR}/<slug>.json")
     ap.add_argument("--k", type=int, help="cutoff; defaults to the model's top_k")
     ap.add_argument("--json", type=Path, help="also write the report here for before/after diffing")
+    ap.add_argument("--no-context", action="store_true",
+                    help="retrieve on the bare final turn, ignoring prior turns (pre-0.12.0 behaviour)")
     args = ap.parse_args()
 
-    report = asyncio.run(run(args.model, args.goldens, args.k))
+    report = asyncio.run(run(args.model, args.goldens, args.k, no_context=args.no_context))
     _print(report)
     if args.json:
         args.json.parent.mkdir(parents=True, exist_ok=True)

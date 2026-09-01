@@ -1,6 +1,7 @@
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.services.retrieval import _expand_neighbours, _rrf_merge, ChunkScore, RRF_K
+from app.services import retrieval
+from app.services.retrieval import _expand_neighbours, _rrf_merge, retrieve_with_threshold, ChunkScore, RRF_K
 
 
 def _make_chunk(chunk_id: int) -> MagicMock:
@@ -202,3 +203,49 @@ class TestNeighbourScoring:
     def test_real_hits_are_unaffected(self):
         assert ChunkScore(chunk_id=1, distance=0.4).retrieval_method == "vector"
         assert ChunkScore(chunk_id=1, distance=0.4, keyword_rank=2).retrieval_method == "hybrid"
+
+
+class TestRetrievalContext:
+    """`context` enriches the embedded text only — keyword search and reranking
+    must keep seeing the bare query, or a topic switch drags the old subject."""
+
+    def _chunk(self, chunk_id: int) -> MagicMock:
+        chunk = MagicMock()
+        chunk.id = chunk_id
+        chunk.content = f"content-{chunk_id}"
+        chunk.source_identifier = "doc"
+        chunk.position = chunk_id
+        return chunk
+
+    def _patches(self, chunks):
+        embed = AsyncMock(return_value=MagicMock(embedding=[0.1] * 3, total_tokens=5))
+        vector = AsyncMock(return_value=[(c, 0.4) for c in chunks])
+        keyword = AsyncMock(return_value=[])
+        rerank = AsyncMock(return_value=(chunks, {}, 0))
+        return (
+            patch.object(retrieval, "embed_query", embed),
+            patch.object(retrieval, "_vector_search", vector),
+            patch.object(retrieval, "_keyword_search", keyword),
+            patch.object(retrieval, "_rerank_chunks", rerank),
+            (embed, vector, keyword, rerank),
+        )
+
+    async def test_context_prepended_to_embedding_only(self, sample_model):
+        chunks = [self._chunk(1), self._chunk(2)]
+        p1, p2, p3, p4, (embed, _, keyword, rerank) = self._patches(chunks)
+        with p1, p2, p3, p4:
+            await retrieve_with_threshold(
+                AsyncMock(), sample_model, "well where does he work",
+                context="what are his main technical skills",
+            )
+
+        assert embed.await_args.args[0] == "what are his main technical skills\nwell where does he work"
+        assert keyword.await_args.args[2] == "well where does he work"
+        assert rerank.await_args.args[1] == "well where does he work"
+
+    async def test_no_context_embeds_bare_query(self, sample_model):
+        p1, p2, p3, p4, (embed, _, _, _) = self._patches([self._chunk(1)])
+        with p1, p2, p3, p4:
+            await retrieve_with_threshold(AsyncMock(), sample_model, "who is charlie")
+
+        assert embed.await_args.args[0] == "who is charlie"

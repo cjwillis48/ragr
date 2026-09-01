@@ -53,8 +53,14 @@ async def _load_session_history(
     session: AsyncSession,
     model: RagModel,
     session_id: str,
-) -> list[dict]:
-    """Load the last N conversation turns for a session from the DB."""
+) -> tuple[list[dict], str | None]:
+    """Load the last N conversation turns for a session from the DB.
+
+    Returns (history, last_user_message). History carries only answered turns —
+    declined exchanges add nothing to the generation prompt. The last user
+    message comes back regardless of status: a turn that failed still names
+    the subject its follow-up refers to.
+    """
     result = await session.execute(
         select(Message)
         .join(Conversation, Message.conversation_id == Conversation.id)
@@ -63,7 +69,6 @@ async def _load_session_history(
             Conversation.session_id == session_id,
             Conversation.deleted_at.is_(None),
             Message.deleted_at.is_(None),
-            Message.status == "answered",
         )
         .order_by(Message.created_at.desc())
         .limit(model.history_turns)
@@ -73,9 +78,10 @@ async def _load_session_history(
     # Reverse to chronological order and flatten to message pairs
     history = []
     for row in reversed(rows):
-        history.append({"role": "user", "content": row.message})
-        history.append({"role": "assistant", "content": row.response})
-    return history
+        if row.status == "answered":
+            history.append({"role": "user", "content": row.message})
+            history.append({"role": "assistant", "content": row.response})
+    return history, rows[0].message if rows else None
 
 
 async def _log_message(
@@ -168,8 +174,20 @@ async def chat(
     span.set_attribute("chat.stream", body.stream)
 
     t_req = time.perf_counter()
+
+    # Resolve history before retrieval so a follow-up's referent reaches the
+    # search, not just the generator. Prefer server-side session history, fall
+    # back to client-provided.
+    if body.session_id or not body.history:
+        history, prev_user = await _load_session_history(session, model, session_id)
+    else:
+        history = [{"role": m.role, "content": m.content} for m in body.history]
+        prev_user = next((m["content"] for m in reversed(history) if m["role"] == "user"), None)
+
+    history = history or None
+
     try:
-        retrieval = await retrieve_with_threshold(session, model, body.message)
+        retrieval = await retrieve_with_threshold(session, model, body.message, context=prev_user)
     except httpx.TimeoutException:
         logger.error("embedding_timeout")
         raise HTTPException(status_code=503, detail="Embedding service timed out. Please try again.")
@@ -179,14 +197,6 @@ async def chat(
 
     rerank_cost = estimate_rerank_cost(model.rerank_model, retrieval.rerank_tokens) if retrieval.rerank_tokens else 0.0
     logger.info("pre_stream_ready", extra={"duration_ms": round((time.perf_counter() - t_req) * 1000), "chunks": len(retrieval.chunks), "rerank_cost": rerank_cost})
-
-    # Build history: prefer server-side session history, fall back to client-provided
-    if body.session_id or not body.history:
-        history = await _load_session_history(session, model, session_id)
-    else:
-        history = [{"role": m.role, "content": m.content} for m in body.history]
-
-    history = history or None
 
     if body.stream:
         return StreamingResponse(

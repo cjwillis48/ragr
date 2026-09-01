@@ -26,6 +26,7 @@ def sample_model():
     model.rerank_candidates = 60
     model.rerank_threshold = 0.0
     model.keyword_search_enabled = True
+    model.neighbor_radius = 0
     model.history_turns = 10
     model.hosted_chat = True
     model.budget_limit = 10.0
