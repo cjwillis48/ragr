@@ -231,9 +231,9 @@ async def retrieve_chunks(
 
     `context` (the previous conversation turn) is prepended to the *embedded* text
     only, so a follow-up like "well where does he work" lands near its subject.
-    Keyword search and reranking still see the bare query: BM25 over a whole prior
-    turn matches too broadly, and reranking on the bare question is what keeps a
-    topic switch from dragging the old subject forward.
+    Keyword search and reranking still see the bare query: full-text ranking over
+    a whole prior turn matches too broadly, and reranking on the bare question is
+    what keeps a topic switch from dragging the old subject forward.
     """
     embed_text = f"{context}\n{query}" if context else query
     candidate_limit = model.rerank_candidates or model.top_k * RERANK_CANDIDATE_MULTIPLIER
