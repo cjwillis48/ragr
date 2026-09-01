@@ -79,7 +79,7 @@ spec:
                   name: ragr-secrets
                   key: CLERK_SECRET_KEY
             - name: CONSOLE_ORIGINS
-              value: '["https://ragr.charliewillis.com","https://ragr.dev","https://www.ragr.dev"]'
+              value: '["https://ragr.dev","https://ragr.charliewillis.com"]'
             - name: R2_ACCOUNT_ID
               value: "0a5f0f60df717358942f04cca4d61c3a"
             - name: R2_BUCKET_NAME
