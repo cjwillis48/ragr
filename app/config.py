@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     default_generation_model: str = "claude-haiku-4-5"
     default_embedding_model: str = "voyage-4-lite"
     default_rerank_model: str = "rerank-2.5-lite"
+    default_rerank_candidates: int = 60
+    default_rerank_threshold: float = 0.35
     default_reranker_enabled: bool = True
     default_history_turns: int = 10
     default_hosted_chat: bool = True

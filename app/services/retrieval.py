@@ -54,18 +54,19 @@ async def _vector_search(
     session: AsyncSession,
     model: RagModel,
     query_embedding: list[float],
-    threshold_distance: float,
+    threshold_distance: float | None,
     limit: int,
 ) -> list[tuple[ContentChunk, float]]:
-    """Retrieve chunks by cosine similarity."""
+    """Retrieve chunks by cosine similarity, optionally cut at threshold_distance."""
     distance_col = ContentChunk.embedding.cosine_distance(query_embedding).label("distance")
     stmt = (
         select(ContentChunk, distance_col)
         .where(ContentChunk.model_id == model.id)
-        .where(ContentChunk.embedding.cosine_distance(query_embedding) <= threshold_distance)
         .order_by(distance_col)
         .limit(limit)
     )
+    if threshold_distance is not None:
+        stmt = stmt.where(ContentChunk.embedding.cosine_distance(query_embedding) <= threshold_distance)
     with tracer.start_as_current_span(
         "retrieval.vector_search",
         attributes={"db.system": "postgresql", "retrieval.candidate_limit": limit},
@@ -226,7 +227,14 @@ async def retrieve_with_threshold(
     """
     embed_text = f"{context}\n{query}" if context else query
     query_embed = await embed_query(embed_text, model=model.embedding_model, voyage_api_key=model.custom_voyage_key)
-    threshold_distance = 1.0 - model.similarity_threshold
+
+    # Cosine distance is a crude relevance proxy (r = -0.55 against rerank
+    # scores on production traffic). When a reranker will judge the candidates
+    # anyway, a hard distance cutoff only starves it — a vague query embeds far
+    # from everything, and the answer gets discarded before the better scorer
+    # ever sees it. So the cutoff applies only when no reranker runs;
+    # rerank_threshold is the precision floor otherwise.
+    threshold_distance = None if model.reranker_enabled else 1.0 - model.similarity_threshold
 
     candidate_limit = model.top_k
     if model.reranker_enabled:
