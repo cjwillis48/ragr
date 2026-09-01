@@ -1,0 +1,37 @@
+[
+  {"turns": ["What are Charlie's main technical skills and areas of expertise?",
+             "Well where does he work"],
+   "expect_source": "charliewillis.com/experience", "expect_substring": "Capital One",
+   "note": "prod failure 2026-08-31 (msg 1122): vague follow-up retrieved 2 chunks, 0 cited, unanswered"},
+
+  {"turns": ["Can you tell me about Charlie's software engineering experience?",
+             "Where has he worked in the past?"],
+   "expect_source": "charliewillis.com/experience", "expect_substring": "UPS"},
+
+  {"query": "What is his career history and trajectory",
+   "expect_source": "charliewillis.com/experience", "expect_substring": "Capital One",
+   "note": "prod failure 2026-09-01 (msg 1126): answer spans many chunks — three goldens share this query, one per employer"},
+  {"query": "What is his career history and trajectory",
+   "expect_source": "charliewillis.com/experience", "expect_substring": "Choice Recovery Path"},
+  {"query": "What is his career history and trajectory",
+   "expect_source": "charliewillis.com/experience", "expect_substring": "UPS"},
+
+  {"turns": ["What is his career history and trajectory",
+             "What is Charlie's favorite color"],
+   "expect_source": "favorite color", "expect_substring": "purple",
+   "note": "topic-switch control: context must not drag the old subject over a tiny target"},
+
+  {"turns": ["What are Charlie's main technical skills and areas of expertise?",
+             "Tell me about the RAG platform he built"],
+   "expect_source": "i-built-a-multitenant-rag-model-platform",
+   "note": "topic-switch control"},
+
+  {"query": "What projects has Charlie built recently?",
+   "expect_source": "charliewillis.com/projects"},
+
+  {"query": "Does Charlie have any pets?",
+   "expect_source": "chatlie_bio.md", "expect_substring": "Remi"},
+
+  {"query": "What did Charlie learn from automating his home server with AI?",
+   "expect_source": "what-i-learned-automating-my-home-server-with-ai"}
+]

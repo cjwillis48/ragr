@@ -212,12 +212,20 @@ async def retrieve_with_threshold(
     model: RagModel,
     query: str,
     limit: int | None = None,
+    context: str | None = None,
 ) -> RetrievalResult:
     """Hybrid retrieval: vector similarity + keyword search merged with RRF.
 
     When reranker is enabled, fetches a larger candidate set then reranks down to top_k.
+
+    `context` (the previous conversation turn) is prepended to the *embedded* text
+    only, so a follow-up like "well where does he work" lands near its subject.
+    Keyword search and reranking still see the bare query: BM25 over a whole prior
+    turn matches too broadly, and reranking on the bare question is what keeps a
+    topic switch from dragging the old subject forward.
     """
-    query_embed = await embed_query(query, model=model.embedding_model, voyage_api_key=model.custom_voyage_key)
+    embed_text = f"{context}\n{query}" if context else query
+    query_embed = await embed_query(embed_text, model=model.embedding_model, voyage_api_key=model.custom_voyage_key)
     threshold_distance = 1.0 - model.similarity_threshold
 
     candidate_limit = model.top_k
