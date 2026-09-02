@@ -35,7 +35,10 @@ class Settings(BaseSettings):
     default_embedding_model: str = "voyage-4-lite"
     default_rerank_model: str = "rerank-2.5-lite"
     default_rerank_candidates: int = 60
-    default_rerank_threshold: float = 0.35
+    # Measured, not guessed: rerank-2.5-lite scores land in roughly 0.34-0.70, so
+    # 0.35 sat under the whole range and filtered nothing. 0.45 is the highest
+    # value that costs no recall on either the prose or code corpus we evaluated.
+    default_rerank_threshold: float = 0.45
     default_history_turns: int = 10
     default_hosted_chat: bool = True
     default_max_tokens: int = 1024
