@@ -8,6 +8,11 @@ Retrieval runs on the last turn with the previous turn as embedding context,
 mirroring the /chat endpoint; --no-context retrieves on the bare last turn
 (pre-0.12.0 behaviour) for before/after comparison.
 
+A golden marked {"expect_absent": true} asserts the corpus cannot answer it, so
+correct behaviour is surfacing nothing above rerank_threshold. These measure the
+precision floor: recall says what we found, abstention says what we declined to
+invent.
+
     uv run python tests/eval/eval_retrieval.py --model hades-bot
     uv run python tests/eval/eval_retrieval.py --model hades-bot --json runs/before.json
 
@@ -29,7 +34,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from app.database import _init_engine
 from app import database
 from app.models.rag_model import RagModel
-from app.services.retrieval import retrieve_chunks
+try:  # renamed in 0.14.0; the old name is what pre-0.14 checkouts export
+    from app.services.retrieval import retrieve_chunks
+except ImportError:
+    from app.services.retrieval import retrieve_with_threshold as retrieve_chunks
 
 GOLDENS_DIR = Path(__file__).resolve().parent / "goldens"
 
@@ -47,10 +55,16 @@ class QueryResult:
     hit_rank: int | None
     retrieved: int
     top_source: str = ""
+    is_absent: bool = False
 
     @property
     def hit(self) -> bool:
         return self.hit_rank is not None
+
+    @property
+    def abstained(self) -> bool:
+        """An unanswerable query that correctly surfaced nothing above the floor."""
+        return self.is_absent and self.retrieved == 0
 
     @property
     def reciprocal_rank(self) -> float:
@@ -64,7 +78,11 @@ class EvalReport:
     queries: int = 0
     recall_at_k: float = 0.0
     mrr_at_k: float = 0.0
+    negatives: int = 0
+    abstention_rate: float = 0.0
+    mean_chunks_when_absent: float = 0.0
     misses: list[str] = field(default_factory=list)
+    leaks: list[str] = field(default_factory=list)
     context: dict = field(default_factory=dict)
     corpus: dict = field(default_factory=dict)
     per_query: list[dict] = field(default_factory=list)
@@ -147,6 +165,7 @@ async def run(slug: str, goldens_path: Path | None, k: int | None, no_context: b
         results: list[QueryResult] = []
         ctx_chars = ctx_junk = ctx_frags = 0
         for golden in goldens:
+            is_absent = bool(golden.get("expect_absent"))
             turns = golden.get("turns") or [golden["query"]]
             query = turns[-1]
             context = turns[-2] if len(turns) > 1 and not no_context else None
@@ -155,13 +174,15 @@ async def run(slug: str, goldens_path: Path | None, k: int | None, no_context: b
             retrieval = await retrieve_chunks(session, model, query, limit=k, context=context)
             chunks = retrieval.chunks
             # Quality of what actually reaches the generator: rank alone can look
-            # perfect while the chunk itself is navigation debris.
-            for chunk in chunks:
-                frags = [f for f in (chunk.content or "").split("\n\n") if f.strip()]
-                ctx_chars += len(chunk.content or "")
-                ctx_frags += len(frags)
-                ctx_junk += sum(len(f) for f in frags if len(f) < SHREDDED_FRAGMENT_CHARS)
-            rank = next(
+            # perfect while the chunk itself is navigation debris. Absent-answer
+            # queries are excluded — ideally they contribute no context at all.
+            if not is_absent:
+                for chunk in chunks:
+                    frags = [f for f in (chunk.content or "").split("\n\n") if f.strip()]
+                    ctx_chars += len(chunk.content or "")
+                    ctx_frags += len(frags)
+                    ctx_junk += sum(len(f) for f in frags if len(f) < SHREDDED_FRAGMENT_CHARS)
+            rank = None if is_absent else next(
                 (i for i, c in enumerate(chunks, 1) if _matches(c, golden)), None
             )
             results.append(QueryResult(
@@ -169,15 +190,29 @@ async def run(slug: str, goldens_path: Path | None, k: int | None, no_context: b
                 hit_rank=rank,
                 retrieved=len(chunks),
                 top_source=chunks[0].source_identifier if chunks else "",
+                is_absent=is_absent,
             ))
 
-        report.queries = len(results)
-        if results:
-            report.recall_at_k = round(sum(r.hit for r in results) / len(results), 3)
-            report.mrr_at_k = round(sum(r.reciprocal_rank for r in results) / len(results), 3)
+        positives = [r for r in results if not r.is_absent]
+        negatives = [r for r in results if r.is_absent]
+
+        report.queries = len(positives)
+        if positives:
+            report.recall_at_k = round(sum(r.hit for r in positives) / len(positives), 3)
+            report.mrr_at_k = round(sum(r.reciprocal_rank for r in positives) / len(positives), 3)
+        report.negatives = len(negatives)
+        if negatives:
+            report.abstention_rate = round(sum(r.abstained for r in negatives) / len(negatives), 3)
+            report.mean_chunks_when_absent = round(
+                sum(r.retrieved for r in negatives) / len(negatives), 2
+            )
         report.misses = [
             f"{r.query} [{g.get('expect_substring') or g.get('expect_source')}]"
-            for r, g in zip(results, goldens) if not r.hit
+            for r, g in zip(results, goldens) if not r.is_absent and not r.hit
+        ]
+        report.leaks = [
+            f"{r.query} → {r.retrieved} chunks, top: {r.top_source}"
+            for r in negatives if not r.abstained
         ]
         if ctx_chars:
             report.context = {
@@ -198,11 +233,15 @@ def _print(report: EvalReport) -> None:
     print(f"  ends at sentence      {c['pct_ends_sentence']}%")
     print(f"  shredded (nav/table)  {c['pct_shredded']}%")
 
-    if not report.queries:
+    if not report.queries and not report.negatives:
         return
     print(f"\n=== retrieval @{report.k} over {report.queries} queries ===")
     print(f"  recall@{report.k}  {report.recall_at_k}")
     print(f"  MRR@{report.k}     {report.mrr_at_k}")
+    if report.negatives:
+        print(f"\n=== precision floor over {report.negatives} unanswerable queries ===")
+        print(f"  abstained           {report.abstention_rate}")
+        print(f"  mean chunks kept    {report.mean_chunks_when_absent}")
     if report.context:
         x = report.context
         print(f"\n  retrieved context   {x['chars']} chars, {x['pct_junk']}% junk, "
@@ -210,6 +249,10 @@ def _print(report: EvalReport) -> None:
     if report.misses:
         print(f"\n  missed ({len(report.misses)}):")
         for q in report.misses:
+            print(f"    - {q}")
+    if report.leaks:
+        print(f"\n  leaked ({len(report.leaks)}):")
+        for q in report.leaks:
             print(f"    - {q}")
     print()
 
