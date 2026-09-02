@@ -1,9 +1,34 @@
+from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.tenancy import SET_TENANT, current_model_id
 
 engine = None
 async_session = None
+
+
+@event.listens_for(Session, "after_begin")
+def _apply_tenant(session: Session, transaction, connection) -> None:
+    """Publish the current tenant to Postgres for row-level security.
+
+    Fires per transaction rather than per session on purpose: the setting is
+    transaction-local, and several request paths commit part-way through (see
+    `_log_message` in app/api/chat.py), which would otherwise drop tenant scoping
+    for everything after the commit.
+
+    This only covers tenants known *before* the transaction opens — the worker,
+    and any session reopened after a commit. A request that discovers its tenant
+    by querying for it has already begun a transaction by then; that case calls
+    `bind_tenant` instead.
+
+    Writes an empty string rather than skipping, so a transaction with no tenant
+    is explicitly unscoped rather than inheriting anything. Must use `connection`
+    and not `session` — the Session is mid-provisioning while this fires.
+    """
+    model_id = current_model_id()
+    connection.execute(SET_TENANT, {"model_id": "" if model_id is None else str(model_id)})
 
 
 def _init_engine():

@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_session
-from app.middleware.log_context import MODEL_ID_CTX
+from app.tenancy import bind_tenant
 from app.models.model_api_key import ModelApiKey
 from app.models.rag_model import RagModel
 from app.services.users import get_or_create_user
@@ -112,17 +112,31 @@ async def _validate_model_key(session: AsyncSession, model: RagModel, token: str
 # ---------------------------------------------------------------------------
 
 
+async def _resolve_model(session: AsyncSession, slug: str, *, active_only: bool) -> RagModel:
+    """Resolve a slug to a model and make it the current tenant.
+
+    The single place tenancy is established for a request: everything downstream
+    — logging, and the `app.model_id` setting that row-level security reads — is
+    keyed off what this sets. The lookup itself is necessarily unscoped, since
+    reading `rag_models` is how the tenant gets discovered in the first place.
+    """
+    query = select(RagModel).where(RagModel.slug == slug, RagModel.deleted_at.is_(None))
+    if active_only:
+        query = query.where(RagModel.is_active.is_(True))
+
+    model = (await session.execute(query)).scalar_one_or_none()
+    if model is None:
+        raise HTTPException(status_code=404, detail="Model not found")
+    await bind_tenant(session, model.id)
+    return model
+
+
 async def get_model_by_slug(
     slug: str,
     session: AsyncSession = Depends(get_session),
 ) -> RagModel:
     """Resolve a model by slug, raising 404 if not found or deleted."""
-    result = await session.execute(select(RagModel).where(RagModel.slug == slug, RagModel.deleted_at.is_(None)))
-    model = result.scalar_one_or_none()
-    if model is None:
-        raise HTTPException(status_code=404, detail="Model not found")
-    MODEL_ID_CTX.set(model.id)
-    return model
+    return await _resolve_model(session, slug, active_only=False)
 
 
 async def get_active_model_by_slug(
@@ -130,14 +144,7 @@ async def get_active_model_by_slug(
     session: AsyncSession = Depends(get_session),
 ) -> RagModel:
     """Resolve an active model by slug, raising 404 if not found or inactive."""
-    result = await session.execute(
-        select(RagModel).where(RagModel.slug == slug, RagModel.is_active.is_(True), RagModel.deleted_at.is_(None))
-    )
-    model = result.scalar_one_or_none()
-    if model is None:
-        raise HTTPException(status_code=404, detail="Model not found")
-    MODEL_ID_CTX.set(model.id)
-    return model
+    return await _resolve_model(session, slug, active_only=True)
 
 
 # ---------------------------------------------------------------------------

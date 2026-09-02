@@ -98,6 +98,29 @@ The API is available at `http://localhost:8000`. A pgweb UI is available at `htt
 | `R2_SECRET_ACCESS_KEY` | No       | --                                                   | R2 secret key                                     |
 | `R2_BUCKET_NAME`       | No       | `ragr-uploads`                                       | R2 bucket name                                    |
 
+### Tenant isolation
+
+`content_chunks` carries a row-level security policy: rows are visible only to the
+tenant named by the `app.model_id` Postgres setting, which `app/database.py`
+publishes at the start of every transaction from the context in `app/tenancy.py`.
+A query that forgets `WHERE model_id = ...` returns nothing instead of another
+tenant's chunks.
+
+The policy is **currently inert everywhere**. `ragr` is the initdb superuser, and
+superusers bypass row security unconditionally — `FORCE ROW LEVEL SECURITY` does
+not change that. Migrations create a restricted `ragr_app` role (`NOLOGIN`, no
+password) and grant it what the app needs; enforcement begins only once something
+connects as that role:
+
+```sql
+ALTER ROLE ragr_app WITH LOGIN PASSWORD '<from the secret store>';
+```
+
+Then point the API and worker at it, leaving migrations on the owner — Alembic
+needs `alembic_version`, which `ragr_app` cannot touch. `scripts/` and
+`tests/eval/` also stay on the owner: they resolve a model without going through
+the request path, so they never bind a tenant and would see zero rows.
+
 ## Deployment
 
 RAGr deploys to Kubernetes via GitHub Actions + Argo CD:

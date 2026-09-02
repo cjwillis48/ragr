@@ -24,6 +24,7 @@ from app.services.html import strip_html
 from app.logging_setup import configure_logging
 from app.services.ingest import ingest_content
 from app.telemetry import setup_tracing, tracer
+from app.tenancy import tenant_scope
 import app.services.wikipedia as wikipedia_module
 
 configure_logging()
@@ -361,10 +362,13 @@ async def process_job(job: IngestionJob) -> None:
     if parent_job_id:
         job_extra["parent_job_id"] = parent_job_id
 
+    # Every session a handler opens inherits this tenant, which is what lets the
+    # worker write chunks under row-level security. Scoped to the job rather than
+    # set once, because the worker processes every tenant from one long-lived task.
     with tracer.start_as_current_span(
         "worker.job",
         attributes={"job.id": job.id, "job.type": job.job_type, "model.id": job.model_id},
-    ):
+    ), tenant_scope(job.model_id):
         try:
             await handler(job)
             await mark_complete(job.id)
