@@ -23,12 +23,20 @@ def _apply_tenant(session: Session, transaction, connection) -> None:
     by querying for it has already begun a transaction by then; that case calls
     `bind_tenant` instead.
 
-    Writes an empty string rather than skipping, so a transaction with no tenant
-    is explicitly unscoped rather than inheriting anything. Must use `connection`
-    and not `session` — the Session is mid-provisioning while this fires.
+    Skipping when there is no tenant costs nothing in safety: the setting is
+    transaction-local, so a transaction that never sets it reads NULL rather than
+    whatever the previous one on that pooled connection used, and the policy
+    treats NULL as "match nothing". It does save a round trip on every
+    tenant-less transaction — health checks, and the worker's queue poll every
+    1.5 seconds.
+
+    Must use `connection` and not `session`: the Session is mid-provisioning
+    while this fires.
     """
     model_id = current_model_id()
-    connection.execute(SET_TENANT, {"model_id": "" if model_id is None else str(model_id)})
+    if model_id is None:
+        return
+    connection.execute(SET_TENANT, {"model_id": str(model_id)})
 
 
 def _init_engine():

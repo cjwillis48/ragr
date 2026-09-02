@@ -12,14 +12,14 @@ Nothing connects as this role yet. The API and worker still run as the owner, so
 creating it is inert until a DATABASE_URL points at it.
 
 Revision ID: h5i6j7k8l9m0
-Revises: f3g4h5i6j7k8
+Revises: j7k8l9m0n1o2
 Create Date: 2026-09-02
 """
 
 from alembic import op
 
 revision = "h5i6j7k8l9m0"
-down_revision = "f3g4h5i6j7k8"
+down_revision = "j7k8l9m0n1o2"
 branch_labels = None
 depends_on = None
 
