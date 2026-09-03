@@ -34,10 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from app.database import _init_engine
 from app import database
 from app.models.rag_model import RagModel
-try:  # renamed in 0.14.0; the old name is what pre-0.14 checkouts export
-    from app.services.retrieval import retrieve_chunks
-except ImportError:
-    from app.services.retrieval import retrieve_with_threshold as retrieve_chunks
+from app.services.retrieval import retrieve_chunks
 
 GOLDENS_DIR = Path(__file__).resolve().parent / "goldens"
 
