@@ -1,148 +1,201 @@
 [
-  {"turns": ["What are Charlie's main technical skills and areas of expertise?",
-             "Well where does he work"],
-   "expect_source": "charliewillis.com/experience", "expect_substring": "Capital One",
-   "note": "prod failure 2026-08-31 (msg 1122): vague follow-up retrieved 2 chunks, 0 cited, unanswered"},
-
-  {"turns": ["Can you tell me about Charlie's software engineering experience?",
-             "Where has he worked in the past?"],
-   "expect_source": "charliewillis.com/experience", "expect_substring": "UPS"},
-
-  {"query": "What is his career history and trajectory",
-   "expect_source": "charliewillis.com/experience", "expect_substring": "Capital One",
-   "note": "prod failure 2026-09-01 (msg 1126): answer spans many chunks — three goldens share this query, one per employer"},
-  {"query": "What is his career history and trajectory",
-   "expect_source": "charliewillis.com/experience", "expect_substring": "Choice Recovery Path"},
-  {"query": "What is his career history and trajectory",
-   "expect_source": "charliewillis.com/experience", "expect_substring": "UPS"},
-
-  {"turns": ["What is his career history and trajectory",
-             "What is Charlie's favorite color"],
-   "expect_source": "favorite color", "expect_substring": "purple",
-   "note": "topic-switch control: context must not drag the old subject over a tiny target"},
-
-  {"turns": ["What are Charlie's main technical skills and areas of expertise?",
-             "Tell me about the RAG platform he built"],
-   "expect_source": "i-built-a-multitenant-rag-model-platform",
-   "note": "topic-switch control"},
-
-  {"query": "What projects has Charlie built recently?",
-   "expect_source": "charliewillis.com/projects"},
-
-  {"query": "Does Charlie have any pets?",
-   "expect_source": "chatlie_bio.md", "expect_substring": "Remi"},
-
-  {"query": "What did Charlie learn from automating his home server with AI?",
-   "expect_source": "what-i-learned-automating-my-home-server-with-ai"},
-
-  {"query": "When is Charlie's birthday?",
-   "expect_source": "chatlie_bio.md", "expect_substring": "July 4, 1991"},
-
-  {"query": "Where did Charlie go to college?",
-   "expect_source": "chatlie_bio.md", "expect_substring": "Purdue"},
-
-  {"query": "Does Charlie have a master's degree?",
-   "expect_source": "chatlie_bio.md", "expect_substring": "Georgia Institute of Technology"},
-
-  {"query": "What certifications does Charlie hold?",
-   "expect_source": "chatlie_bio.md", "expect_substring": "AWS Certified Solutions Architect Associate"},
-
-  {"query": "Is Charlie married?",
-   "expect_source": "chatlie_bio.md", "expect_substring": "Rachel"},
-
-  {"query": "Does Charlie have any children?",
-   "expect_source": "chatlie_bio.md", "expect_substring": "Penny"},
-
-  {"query": "Where does Charlie live?",
-   "expect_source": "chatlie_bio.md", "expect_substring": "Sellersburg"},
-
-  {"query": "How did Charlie get started in programming?",
-   "expect_source": "chatlie_bio.md", "expect_substring": "2006"},
-
-  {"query": "What does Charlie work on at Capital One?",
-   "expect_source": "charliewillis.com/experience", "expect_substring": "Capital One"},
-
-  {"query": "What tech stack did Charlie use at Choice Recovery Path?",
-   "expect_source": "charliewillis.com/experience", "expect_substring": "Laravel"},
-
-  {"query": "What messaging and integration technologies has Charlie worked with?",
-   "expect_source": "charliewillis.com/experience", "expect_substring": "ActiveMQ"},
-
-  {"query": "What databases has Charlie worked with?",
-   "expect_source": "charliewillis.com/experience", "expect_substring": "Couchbase"},
-
-  {"query": "Tell me about the airline messaging broker Charlie built",
-   "expect_source": "charliewillis.com/projects", "expect_substring": "Stateless Airline Messaging Broker"},
-
-  {"query": "What did Charlie build to reduce jet fuel consumption?",
-   "expect_source": "charliewillis.com/projects", "expect_substring": "Fuel Optimization"},
-
-  {"query": "How does Charlie approach working on a team?",
-   "expect_source": "charliewillis.com/about", "expect_substring": "Team over individual"},
-
-  {"query": "What does Charlie enjoy doing outside of work?",
-   "expect_source": "charliewillis.com/about", "expect_substring": "grilling"},
-
-  {"query": "Has Charlie built a home lab or cluster?",
-   "expect_source": "i-built-a-pi-cluster"},
-
-  {"turns": ["Tell me about RAGr, the platform Charlie built",
-             "What did he use to build it?"],
-   "expect_source": "i-built-a-multitenant-rag-model-platform"},
-
-  {"query": "What did Charlie do during his time at FedEx?",
-   "expect_absent": true,
-   "note": "adjacent-absent: 7 years at UPS makes a competitor logistics firm maximally near"},
-
-  {"query": "Does Charlie hold the AWS Solutions Architect Professional certification?",
-   "expect_absent": true,
-   "note": "adjacent-absent: he holds the Associate — one word apart"},
-
-  {"query": "What React projects has Charlie built?",
-   "expect_absent": true,
-   "note": "adjacent-absent: Angular appears in the corpus, React does not"},
-
-  {"query": "How does Charlie use Terraform to manage infrastructure?",
-   "expect_absent": true,
-   "note": "adjacent-absent: Kubernetes/Docker/GCP/AWS all present, no IaC anywhere"},
-
-  {"query": "What is Charlie's experience with RabbitMQ?",
-   "expect_absent": true,
-   "note": "adjacent-absent: sits among Kafka, ActiveMQ, SQS/SNS, Pub/Sub"},
-
-  {"query": "Has Charlie worked with MongoDB?",
-   "expect_absent": true,
-   "note": "adjacent-absent: surrounded by Postgres, MySQL, Redis, DynamoDB, Couchbase"},
-
-  {"query": "What did Charlie study at Indiana University?",
-   "expect_absent": true,
-   "note": "adjacent-absent: lifelong Indiana resident who attended Purdue"},
-
-  {"query": "What was Charlie's GPA at Purdue?",
-   "expect_absent": true,
-   "note": "in-domain unanswerable: Purdue is in the corpus, GPA is not"},
-
-  {"query": "How much does Remi weigh?",
-   "expect_absent": true,
-   "note": "in-domain unanswerable: breed, age and 'moose-sized' are stated, weight is not"},
-
-  {"query": "When did Charlie finish his master's degree at Georgia Tech?",
-   "expect_absent": true,
-   "note": "in-domain unanswerable: start date only"},
-
-  {"query": "What is Charlie's salary at Capital One?",
-   "expect_absent": true,
-   "note": "in-domain unanswerable: realistic visitor question, no compensation anywhere"},
-
-  {"query": "What conferences has Charlie spoken at?",
-   "expect_absent": true,
-   "note": "plainly absent"},
-
-  {"query": "Does Charlie hold any patents?",
-   "expect_absent": true,
-   "note": "plainly absent"},
-
-  {"query": "What does Charlie think about quantum computing?",
-   "expect_absent": true,
-   "note": "plainly absent"}
+ {
+  "turns": [
+   "What are Charlie's main technical skills and areas of expertise?",
+   "Well where does he work"
+  ],
+  "expect_source": "charliewillis.com/experience",
+  "expect_substring": "Capital One",
+  "note": "prod failure 2026-08-31 (msg 1122): vague follow-up retrieved 2 chunks, 0 cited, unanswered"
+ },
+ {
+  "turns": [
+   "Can you tell me about Charlie's software engineering experience?",
+   "Where has he worked in the past?"
+  ],
+  "expect_source": "charliewillis.com/experience",
+  "expect_substring": "UPS"
+ },
+ {
+  "query": "What is his career history and trajectory",
+  "expect_source": "charliewillis.com/experience",
+  "expect_substring": "Capital One",
+  "note": "prod failure 2026-09-01 (msg 1126): answer spans many chunks \u2014 three goldens share this query, one per employer"
+ },
+ {
+  "query": "What is his career history and trajectory",
+  "expect_source": "charliewillis.com/experience",
+  "expect_substring": "Choice Recovery Path"
+ },
+ {
+  "query": "What is his career history and trajectory",
+  "expect_source": "charliewillis.com/experience",
+  "expect_substring": "UPS"
+ },
+ {
+  "turns": [
+   "What is his career history and trajectory",
+   "What is Charlie's favorite color"
+  ],
+  "expect_source": "favorite color",
+  "expect_substring": "purple",
+  "note": "topic-switch control: context must not drag the old subject over a tiny target"
+ },
+ {
+  "turns": [
+   "What are Charlie's main technical skills and areas of expertise?",
+   "Tell me about the RAG platform he built"
+  ],
+  "expect_source": "i-built-a-multitenant-rag-model-platform",
+  "note": "topic-switch control"
+ },
+ {
+  "query": "What projects has Charlie built recently?",
+  "expect_source": "charliewillis.com/projects"
+ },
+ {
+  "query": "Does Charlie have any pets?",
+  "expect_source": "chatlie_bio.md",
+  "expect_substring": "Remi"
+ },
+ {
+  "query": "What did Charlie learn from automating his home server with AI?",
+  "expect_source": "what-i-learned-automating-my-home-server-with-ai"
+ },
+ {
+  "query": "When is Charlie's birthday?",
+  "expect_source": "chatlie_bio.md",
+  "expect_substring": "July 4, 1991"
+ },
+ {
+  "query": "Where did Charlie go to college?",
+  "expect_source": "chatlie_bio.md",
+  "expect_substring": "Purdue"
+ },
+ {
+  "query": "Does Charlie have a master's degree?",
+  "expect_source": "chatlie_bio.md",
+  "expect_substring": "Georgia Institute of Technology"
+ },
+ {
+  "query": "What certifications does Charlie hold?",
+  "expect_source": "chatlie_bio.md",
+  "expect_substring": "AWS Certified Solutions Architect Associate"
+ },
+ {
+  "query": "Is Charlie married?",
+  "expect_source": "chatlie_bio.md",
+  "expect_substring": "Rachel"
+ },
+ {
+  "query": "Does Charlie have any children?",
+  "expect_source": "chatlie_bio.md",
+  "expect_substring": "Penny"
+ },
+ {
+  "query": "Where does Charlie live?",
+  "expect_source": "chatlie_bio.md",
+  "expect_substring": "Sellersburg"
+ },
+ {
+  "query": "How did Charlie get started in programming?",
+  "expect_source": "chatlie_bio.md",
+  "expect_substring": "2006"
+ },
+ {
+  "query": "What does Charlie work on at Capital One?",
+  "expect_source": "charliewillis.com/experience",
+  "expect_substring": "Capital One"
+ },
+ {
+  "query": "What tech stack did Charlie use at Choice Recovery Path?",
+  "expect_source": "charliewillis.com/experience",
+  "expect_substring": "Laravel"
+ },
+ {
+  "query": "What messaging and integration technologies has Charlie worked with?",
+  "expect_source": "charliewillis.com/experience",
+  "expect_substring": "ActiveMQ"
+ },
+ {
+  "query": "What databases has Charlie worked with?",
+  "expect_source": "charliewillis.com/experience",
+  "expect_substring": "Couchbase"
+ },
+ {
+  "query": "Tell me about the airline messaging broker Charlie built",
+  "expect_source": "charliewillis.com/projects",
+  "expect_substring": "Stateless Airline Messaging Broker"
+ },
+ {
+  "query": "What did Charlie build to reduce jet fuel consumption?",
+  "expect_source": "charliewillis.com/projects",
+  "expect_substring": "Fuel Optimization"
+ },
+ {
+  "query": "How does Charlie approach working on a team?",
+  "expect_source": "charliewillis.com/about",
+  "expect_substring": "Team over individual"
+ },
+ {
+  "query": "What does Charlie enjoy doing outside of work?",
+  "expect_source": "charliewillis.com/about",
+  "expect_substring": "grilling"
+ },
+ {
+  "query": "Has Charlie built a home lab or cluster?",
+  "expect_source": "i-built-a-pi-cluster"
+ },
+ {
+  "turns": [
+   "Tell me about RAGr, the platform Charlie built",
+   "What did he use to build it?"
+  ],
+  "expect_source": "i-built-a-multitenant-rag-model-platform"
+ },
+ {
+  "query": "What did Charlie do during his time at FedEx?",
+  "expect_absent": true,
+  "note": "adjacent-absent: 7 years at UPS makes a competitor logistics firm maximally near"
+ },
+ {
+  "query": "What React projects has Charlie built?",
+  "expect_absent": true,
+  "note": "adjacent-absent: Angular appears in the corpus, React does not"
+ },
+ {
+  "query": "How does Charlie use Terraform to manage infrastructure?",
+  "expect_absent": true,
+  "note": "adjacent-absent: Kubernetes/Docker/GCP/AWS all present, no IaC anywhere"
+ },
+ {
+  "query": "What is Charlie's experience with RabbitMQ?",
+  "expect_absent": true,
+  "note": "adjacent-absent: sits among Kafka, ActiveMQ, SQS/SNS, Pub/Sub"
+ },
+ {
+  "query": "Has Charlie worked with MongoDB?",
+  "expect_absent": true,
+  "note": "adjacent-absent: surrounded by Postgres, MySQL, Redis, DynamoDB, Couchbase"
+ },
+ {
+  "query": "What did Charlie study at Indiana University?",
+  "expect_absent": true,
+  "note": "adjacent-absent: lifelong Indiana resident who attended Purdue"
+ },
+ {
+  "query": "What conferences has Charlie spoken at?",
+  "expect_absent": true,
+  "note": "plainly absent"
+ },
+ {
+  "query": "Does Charlie hold any patents?",
+  "expect_absent": true,
+  "note": "plainly absent"
+ },
+ {
+  "query": "What does Charlie think about quantum computing?",
+  "expect_absent": true,
+  "note": "plainly absent"
+ }
 ]

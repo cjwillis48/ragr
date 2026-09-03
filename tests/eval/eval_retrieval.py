@@ -72,6 +72,10 @@ class QueryResult:
 class EvalReport:
     model_slug: str
     k: int
+    # Abstention is entirely a function of these two, so a report that omits them
+    # can't be compared against another run.
+    rerank_threshold: float = 0.0
+    neighbor_radius: int = 0
     queries: int = 0
     recall_at_k: float = 0.0
     mrr_at_k: float = 0.0
@@ -85,12 +89,30 @@ class EvalReport:
     per_query: list[dict] = field(default_factory=list)
 
 
+def _validate(goldens: list[dict]) -> None:
+    """Check the whole set before running anything.
+
+    Validating inside `_matches` looked equivalent but wasn't: the predicate is
+    never evaluated when retrieval returns no chunks, so a golden with a typo'd
+    key silently scored as a permanent miss instead of raising.
+    """
+    for g in goldens:
+        absent = g.get("expect_absent")
+        expectations = g.get("expect_source") or g.get("expect_substring")
+        if absent is not None and not isinstance(absent, bool):
+            raise ValueError(f"expect_absent must be a boolean, got {absent!r}: {g}")
+        if absent and expectations:
+            raise ValueError(f"an absent golden cannot also expect content: {g}")
+        if not absent and not expectations:
+            raise ValueError(f"golden needs expect_source or expect_substring: {g}")
+        if not (g.get("turns") or g.get("query")):
+            raise ValueError(f"golden needs turns or query: {g}")
+
+
 def _matches(chunk, golden: dict) -> bool:
     """A chunk satisfies a golden when every stated expectation holds."""
     want_source = golden.get("expect_source")
     want_substring = golden.get("expect_substring")
-    if not want_source and not want_substring:
-        raise ValueError(f"golden needs expect_source or expect_substring: {golden}")
 
     if want_source:
         haystack = f"{chunk.source_identifier or ''} {chunk.source_url or ''}"
@@ -150,7 +172,11 @@ async def run(slug: str, goldens_path: Path | None, k: int | None, no_context: b
             sys.exit(f"no active model with slug {slug!r}")
 
         top_k = k or model.top_k
-        report = EvalReport(model_slug=slug, k=top_k)
+        report = EvalReport(
+            model_slug=slug, k=top_k,
+            rerank_threshold=model.rerank_threshold,
+            neighbor_radius=model.neighbor_radius or 0,
+        )
         report.corpus = await _corpus_health(session, model.id)
 
         path = goldens_path or GOLDENS_DIR / f"{slug}.json"
@@ -159,6 +185,7 @@ async def run(slug: str, goldens_path: Path | None, k: int | None, no_context: b
             return report
 
         goldens = json.loads(path.read_text())
+        _validate(goldens)
         results: list[QueryResult] = []
         ctx_chars = ctx_junk = ctx_frags = 0
         for golden in goldens:
@@ -232,11 +259,13 @@ def _print(report: EvalReport) -> None:
 
     if not report.queries and not report.negatives:
         return
-    print(f"\n=== retrieval @{report.k} over {report.queries} queries ===")
-    print(f"  recall@{report.k}  {report.recall_at_k}")
-    print(f"  MRR@{report.k}     {report.mrr_at_k}")
+    if report.queries:
+        print(f"\n=== retrieval @{report.k} over {report.queries} queries ===")
+        print(f"  recall@{report.k}  {report.recall_at_k}")
+        print(f"  MRR@{report.k}     {report.mrr_at_k}")
     if report.negatives:
         print(f"\n=== precision floor over {report.negatives} unanswerable queries ===")
+        print(f"  rerank_threshold    {report.rerank_threshold}")
         print(f"  abstained           {report.abstention_rate}")
         print(f"  mean chunks kept    {report.mean_chunks_when_absent}")
     if report.context:
