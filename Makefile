@@ -37,9 +37,22 @@ test-cov:
 
 # Integration tests need a real Postgres. docker-compose only creates the `ragr`
 # database, so create `ragr_test` (and its pgvector extension) on first run.
+#
+# ragr_test survives between runs, which means it keeps whichever alembic
+# revision the last branch stamped it with. Switch to a branch that doesn't
+# contain that revision and every test errors during fixture setup with
+# "Can't locate revision identified by ...", which points nowhere near the
+# actual cause. So: if the stamped revision isn't in this branch's migrations,
+# drop the database and start clean.
 test-integration:
 	docker compose up -d postgres
 	@until docker compose exec -T postgres pg_isready -U ragr -q; do sleep 1; done
+	@stamped=$$(docker compose exec -T postgres psql -U ragr -d ragr_test -tAc \
+		"SELECT version_num FROM alembic_version" 2>/dev/null | tr -d '[:space:]'); \
+	if [ -n "$$stamped" ] && ! grep -rqs "revision = [\"']$$stamped[\"']" migrations/versions/; then \
+		echo "ragr_test is stamped at $$stamped, which this branch doesn't have — recreating."; \
+		docker compose exec -T postgres dropdb -U ragr ragr_test; \
+	fi
 	@docker compose exec -T postgres psql -U ragr -d ragr -tAc \
 		"SELECT 1 FROM pg_database WHERE datname='ragr_test'" | grep -q 1 \
 		|| docker compose exec -T postgres createdb -U ragr ragr_test
