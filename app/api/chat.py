@@ -22,7 +22,7 @@ from app.models.rag_model import RagModel
 from app.schemas.chat import ChatRequest, ChatResponse
 from app.services.budget import check_budget, estimate_cost, estimate_rerank_cost, record_usage
 from app.services.generation import GenerationResult, generate_answer, generate_answer_stream
-from app.services.retrieval import ChunkScore, RetrievalResult, retrieve_with_threshold
+from app.services.retrieval import ChunkScore, retrieve_chunks
 from app.services.users import owner_can_use_global_keys
 
 _chat_limiter = RateLimiter(max_requests=settings.rate_limit_per_min, window_seconds=60)
@@ -187,7 +187,7 @@ async def chat(
     history = history or None
 
     try:
-        retrieval = await retrieve_with_threshold(session, model, body.message, context=prev_user)
+        retrieval = await retrieve_chunks(session, model, body.message, context=prev_user)
     except httpx.TimeoutException:
         logger.error("embedding_timeout")
         raise HTTPException(status_code=503, detail="Embedding service timed out. Please try again.")

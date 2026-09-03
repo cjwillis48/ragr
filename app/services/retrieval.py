@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
@@ -54,10 +55,9 @@ async def _vector_search(
     session: AsyncSession,
     model: RagModel,
     query_embedding: list[float],
-    threshold_distance: float | None,
     limit: int,
 ) -> list[tuple[ContentChunk, float]]:
-    """Retrieve chunks by cosine similarity, optionally cut at threshold_distance."""
+    """Retrieve chunks by cosine similarity."""
     distance_col = ContentChunk.embedding.cosine_distance(query_embedding).label("distance")
     stmt = (
         select(ContentChunk, distance_col)
@@ -65,8 +65,6 @@ async def _vector_search(
         .order_by(distance_col)
         .limit(limit)
     )
-    if threshold_distance is not None:
-        stmt = stmt.where(ContentChunk.embedding.cosine_distance(query_embedding) <= threshold_distance)
     with tracer.start_as_current_span(
         "retrieval.vector_search",
         attributes={"db.system": "postgresql", "retrieval.candidate_limit": limit},
@@ -141,17 +139,25 @@ async def _rerank_chunks(
     query: str,
     chunks: list[ContentChunk],
 ) -> tuple[list[ContentChunk], dict[int, float], int]:
-    """Rerank chunks using Voyage, applying score threshold. Returns (chunks, scores, tokens)."""
-    if not model.reranker_enabled or len(chunks) <= 1:
+    """Rerank chunks using Voyage, applying score threshold. Returns (chunks, scores, tokens).
+
+    A rerank failure degrades to RRF order truncated to top_k instead of
+    propagating — a worse ranking beats a dead chat endpoint.
+    """
+    if len(chunks) <= 1:
         return chunks, {}, 0
 
-    rerank_result = await rerank(
-        query=query,
-        documents=[c.content for c in chunks],
-        model=model.rerank_model,
-        top_k=model.top_k,
-        voyage_api_key=model.custom_voyage_key,
-    )
+    try:
+        rerank_result = await rerank(
+            query=query,
+            documents=[c.content for c in chunks],
+            model=model.rerank_model,
+            top_k=model.top_k,
+            voyage_api_key=model.custom_voyage_key,
+        )
+    except Exception:
+        logger.exception("rerank_failed_using_rrf_order")
+        return chunks[: model.top_k], {}, 0
     rerank_scores = {chunks[i].id: s for i, s in zip(rerank_result.indices, rerank_result.scores)}
     reranked = [chunks[i] for i in rerank_result.indices]
 
@@ -208,54 +214,59 @@ async def _expand_neighbours(
     return expanded, added
 
 
-async def retrieve_with_threshold(
+async def retrieve_chunks(
     session: AsyncSession,
     model: RagModel,
     query: str,
     limit: int | None = None,
     context: str | None = None,
 ) -> RetrievalResult:
-    """Hybrid retrieval: vector similarity + keyword search merged with RRF.
+    """Hybrid retrieval: vector similarity + keyword search merged with RRF,
+    then reranked down to top_k.
 
-    When reranker is enabled, fetches a larger candidate set then reranks down to top_k.
+    No vector distance cutoff is applied — cosine distance is a crude relevance
+    proxy (r = -0.55 against rerank scores on production traffic), so the
+    reranker judges the full candidate set and rerank_threshold is the
+    precision floor.
 
     `context` (the previous conversation turn) is prepended to the *embedded* text
     only, so a follow-up like "well where does he work" lands near its subject.
-    Keyword search and reranking still see the bare query: BM25 over a whole prior
-    turn matches too broadly, and reranking on the bare question is what keeps a
-    topic switch from dragging the old subject forward.
+    Keyword search and reranking still see the bare query: full-text ranking over
+    a whole prior turn matches too broadly, and reranking on the bare question is
+    what keeps a topic switch from dragging the old subject forward.
     """
     embed_text = f"{context}\n{query}" if context else query
-    query_embed = await embed_query(embed_text, model=model.embedding_model, voyage_api_key=model.custom_voyage_key)
-
-    # Cosine distance is a crude relevance proxy (r = -0.55 against rerank
-    # scores on production traffic). When a reranker will judge the candidates
-    # anyway, a hard distance cutoff only starves it — a vague query embeds far
-    # from everything, and the answer gets discarded before the better scorer
-    # ever sees it. So the cutoff applies only when no reranker runs;
-    # rerank_threshold is the precision floor otherwise.
-    threshold_distance = None if model.reranker_enabled else 1.0 - model.similarity_threshold
-
-    candidate_limit = model.top_k
-    if model.reranker_enabled:
-        candidate_limit = model.rerank_candidates or model.top_k * RERANK_CANDIDATE_MULTIPLIER
+    candidate_limit = model.rerank_candidates or model.top_k * RERANK_CANDIDATE_MULTIPLIER
 
     t0 = time.perf_counter()
 
-    # Run searches
-    vector_rows = await _vector_search(session, model, query_embed.embedding, threshold_distance, candidate_limit)
-
+    # Keyword search needs no embedding, so it runs concurrently with the
+    # Voyage round trip and its latency hides behind it. Vector search can't
+    # join them: it needs the embedding, and the shared session only allows
+    # one query in flight anyway.
+    embed_coro = embed_query(embed_text, model=model.embedding_model, voyage_api_key=model.custom_voyage_key)
     if model.keyword_search_enabled:
-        keyword_rows = await _keyword_search(session, model, query, candidate_limit)
+        results = await asyncio.gather(
+            embed_coro,
+            _keyword_search(session, model, query, candidate_limit),
+            return_exceptions=True,
+        )
+        for r in results:
+            if isinstance(r, BaseException):
+                raise r
+        query_embed, keyword_rows = results
     else:
+        query_embed = await embed_coro
         keyword_rows = []
+
+    vector_rows = await _vector_search(session, model, query_embed.embedding, candidate_limit)
 
     # Merge with RRF
     chunks, distances, keyword_ranks = _rrf_merge(vector_rows, keyword_rows, candidate_limit)
 
     logger.info("retrieval", extra={
         "vector": len(vector_rows), "keyword": len(keyword_rows),
-        "merged": len(chunks), "threshold": model.similarity_threshold,
+        "merged": len(chunks),
         "duration_ms": round((time.perf_counter() - t0) * 1000),
     })
 

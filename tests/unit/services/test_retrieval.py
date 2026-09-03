@@ -2,7 +2,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.services import retrieval
-from app.services.retrieval import _expand_neighbours, _rrf_merge, retrieve_with_threshold, ChunkScore, RRF_K
+from app.services.retrieval import _expand_neighbours, _rerank_chunks, _rrf_merge, retrieve_chunks, ChunkScore, RRF_K
 
 
 def _make_chunk(chunk_id: int) -> MagicMock:
@@ -216,7 +216,7 @@ def _content_chunk(chunk_id: int) -> MagicMock:
 
 
 def _search_patches(chunks):
-    """Patch the search internals so retrieve_with_threshold runs without a DB."""
+    """Patch the search internals so retrieve_chunks runs without a DB."""
     embed = AsyncMock(return_value=MagicMock(embedding=[0.1] * 3, total_tokens=5))
     vector = AsyncMock(return_value=[(c, 0.4) for c in chunks])
     keyword = AsyncMock(return_value=[])
@@ -238,7 +238,7 @@ class TestRetrievalContext:
         chunks = [_content_chunk(1), _content_chunk(2)]
         p1, p2, p3, p4, (embed, _, keyword, rerank) = _search_patches(chunks)
         with p1, p2, p3, p4:
-            await retrieve_with_threshold(
+            await retrieve_chunks(
                 AsyncMock(), sample_model, "well where does he work",
                 context="what are his main technical skills",
             )
@@ -250,27 +250,28 @@ class TestRetrievalContext:
     async def test_no_context_embeds_bare_query(self, sample_model):
         p1, p2, p3, p4, (embed, _, _, _) = _search_patches([_content_chunk(1)])
         with p1, p2, p3, p4:
-            await retrieve_with_threshold(AsyncMock(), sample_model, "who is charlie")
+            await retrieve_chunks(AsyncMock(), sample_model, "who is charlie")
 
         assert embed.await_args.args[0] == "who is charlie"
 
 
-class TestVectorCutoff:
-    """With a reranker the distance cutoff is skipped — the reranker judges the
-    full candidate set and rerank_threshold is the precision floor. Without one,
-    the cutoff is the only relevance filter and must stay."""
+class TestRerankFallback:
+    """A Voyage rerank failure degrades to RRF order truncated to top_k —
+    a worse ranking beats a dead chat endpoint."""
 
-    async def test_reranker_enabled_skips_distance_cutoff(self, sample_model):
-        sample_model.reranker_enabled = True
-        p1, p2, p3, p4, (_, vector, _, _) = _search_patches([_content_chunk(1)])
-        with p1, p2, p3, p4:
-            await retrieve_with_threshold(AsyncMock(), sample_model, "vague follow-up")
-        assert vector.await_args.args[3] is None
+    async def test_rerank_failure_falls_back_to_rrf_order(self, sample_model):
+        sample_model.top_k = 2
+        chunks = [_content_chunk(1), _content_chunk(2), _content_chunk(3)]
+        with patch.object(retrieval, "rerank", AsyncMock(side_effect=RuntimeError("voyage down"))):
+            reranked, scores, tokens = await _rerank_chunks(sample_model, "q", chunks)
+        assert [c.id for c in reranked] == [1, 2]
+        assert scores == {}
+        assert tokens == 0
 
-    async def test_no_reranker_keeps_distance_cutoff(self, sample_model):
-        sample_model.reranker_enabled = False
-        sample_model.similarity_threshold = 0.3
-        p1, p2, p3, p4, (_, vector, _, _) = _search_patches([_content_chunk(1)])
-        with p1, p2, p3, p4:
-            await retrieve_with_threshold(AsyncMock(), sample_model, "vague follow-up")
-        assert vector.await_args.args[3] == pytest.approx(0.7)
+    async def test_single_chunk_skips_rerank_call(self, sample_model):
+        rerank_mock = AsyncMock()
+        chunks = [_content_chunk(1)]
+        with patch.object(retrieval, "rerank", rerank_mock):
+            reranked, _, _ = await _rerank_chunks(sample_model, "q", chunks)
+        assert reranked == chunks
+        rerank_mock.assert_not_awaited()

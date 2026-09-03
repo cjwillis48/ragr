@@ -19,7 +19,7 @@ from app.schemas.retrieve import (
 )
 from app.services.budget import estimate_embedding_cost, estimate_rerank_cost
 from app.services.rate_limit import RateLimiter
-from app.services.retrieval import retrieve_with_threshold
+from app.services.retrieval import retrieve_chunks
 
 router = APIRouter(tags=["retrieve"])
 logger = logging.getLogger("ragr.retrieve")
@@ -62,7 +62,7 @@ async def retrieve(
 
     t0 = time.perf_counter()
     try:
-        result = await retrieve_with_threshold(session, model, body.query, limit=body.top_k)
+        result = await retrieve_chunks(session, model, body.query, limit=body.top_k)
     except httpx.TimeoutException:
         logger.error("embedding_timeout")
         raise HTTPException(status_code=503, detail="Embedding service timed out. Please try again.")

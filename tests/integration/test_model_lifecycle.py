@@ -55,11 +55,11 @@ class TestModelUpdate:
         await client.post("/models", json={"name": "Update Bot", "slug": "update-bot"})
         resp = await client.patch("/models/update-bot", json={
             "description": "Updated",
-            "similarity_threshold": 0.5,
+            "rerank_threshold": 0.5,
         })
         assert resp.status_code == 200
         assert resp.json()["description"] == "Updated"
-        assert resp.json()["similarity_threshold"] == 0.5
+        assert resp.json()["rerank_threshold"] == 0.5
 
     async def test_update_name(self, client):
         await client.post("/models", json={"name": "Rename Bot", "slug": "rename-bot"})

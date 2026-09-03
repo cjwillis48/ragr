@@ -29,7 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from app.database import _init_engine
 from app import database
 from app.models.rag_model import RagModel
-from app.services.retrieval import retrieve_with_threshold
+from app.services.retrieval import retrieve_chunks
 
 GOLDENS_DIR = Path(__file__).resolve().parent / "goldens"
 
@@ -152,7 +152,7 @@ async def run(slug: str, goldens_path: Path | None, k: int | None, no_context: b
             context = turns[-2] if len(turns) > 1 and not no_context else None
             # k applies inside retrieval, before neighbour expansion — slicing the
             # result here would discard neighbours (see app/api/retrieve.py).
-            retrieval = await retrieve_with_threshold(session, model, query, limit=k, context=context)
+            retrieval = await retrieve_chunks(session, model, query, limit=k, context=context)
             chunks = retrieval.chunks
             # Quality of what actually reaches the generator: rank alone can look
             # perfect while the chunk itself is navigation debris.
