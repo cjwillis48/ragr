@@ -1,7 +1,9 @@
 NAMESPACE := ragr
 TEST_DATABASE_URL := postgresql+asyncpg://ragr:ragr@localhost:5432/ragr_test
+EVAL_DATABASE_URL ?= postgresql+asyncpg://ragr:ragr@localhost:5432/ragr_eval
+EVAL_MODEL ?= chatlie
 
-.PHONY: restart logs status enter-pg enter-ragr db-export db-import test test-unit test-cov test-integration
+.PHONY: restart logs status enter-pg enter-ragr db-export db-import test test-unit test-cov test-integration eval
 
 restart:
 	kubectl rollout restart deployment/ragr -n $(NAMESPACE)
@@ -58,3 +60,18 @@ test-integration:
 		|| docker compose exec -T postgres createdb -U ragr ragr_test
 	@docker compose exec -T postgres psql -U ragr -d ragr_test -qc "CREATE EXTENSION IF NOT EXISTS vector;"
 	DATABASE_URL="$(TEST_DATABASE_URL)" uv run pytest tests/integration -q
+
+# Score retrieval against a golden set. Worth running before shipping anything
+# that touches retrieval — the goldens are recorded prod failures, so a drop
+# means one of them came back.
+#
+#   make eval
+#   make eval EVAL_MODEL=hades-bot
+#   make eval ARGS="--no-context --json runs/before.json"
+#
+# Needs a corpus in EVAL_DATABASE_URL and VOYAGE_API_KEY (queries are embedded
+# and reranked live). Point it at the owner role, not ragr_app: this resolves a
+# model without going through the request path, so it never binds a tenant.
+eval:
+	@DATABASE_URL="$(EVAL_DATABASE_URL)" uv run python tests/eval/eval_retrieval.py \
+		--model $(EVAL_MODEL) $(ARGS)
