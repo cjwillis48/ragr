@@ -1,7 +1,8 @@
 """Logging context: ContextVars and filter for structured log enrichment.
 
 REQUEST_ID_CTX is set by RequestIdMiddleware.
-MODEL_ID_CTX is set by model-resolving dependencies (get_model_by_slug, etc.).
+The tenant lives in app.tenancy (it drives row-level security, not just logs)
+and is read here so every record carries the model it belongs to.
 
 The LogContextFilter injects both into every log record automatically.
 """
@@ -9,8 +10,9 @@ The LogContextFilter injects both into every log record automatically.
 import logging
 from contextvars import ContextVar
 
+from app.tenancy import current_model_id
+
 REQUEST_ID_CTX: ContextVar[str] = ContextVar("request_id", default="-")
-MODEL_ID_CTX: ContextVar[int | None] = ContextVar("model_id", default=None)
 
 
 class LogContextFilter(logging.Filter):
@@ -18,7 +20,7 @@ class LogContextFilter(logging.Filter):
 
     def filter(self, record: logging.LogRecord) -> bool:
         record.request_id = REQUEST_ID_CTX.get("-")  # type: ignore[attr-defined]
-        model_id = MODEL_ID_CTX.get(None)
+        model_id = current_model_id()
         if model_id is not None:
             record.model_id = model_id  # type: ignore[attr-defined]
         return True
