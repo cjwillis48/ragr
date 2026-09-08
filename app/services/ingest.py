@@ -34,7 +34,7 @@ class IngestResult:
 
 async def _upsert_pending_source(
     session: AsyncSession,
-    model: RagModel,
+    model_id: int,
     source_identifier: str,
     *,
     source_url: str,
@@ -50,7 +50,7 @@ async def _upsert_pending_source(
     report a Source with no content.
     """
     stmt = pg_insert(IngestionSource).values(
-        model_id=model.id,
+        model_id=model_id,
         source_identifier=source_identifier,
         content_hash="",
         chunk_count=0,
@@ -65,24 +65,24 @@ async def _upsert_pending_source(
     await session.execute(stmt.on_conflict_do_update(constraint="uq_model_source", set_=updates))
 
 
-def _enqueue(session: AsyncSession, model: RagModel, job_type: str, job_params: dict) -> None:
-    session.add(IngestionJob(model_id=model.id, job_type=job_type, job_params=job_params))
+def _enqueue(session: AsyncSession, model_id: int, job_type: str, job_params: dict) -> None:
+    session.add(IngestionJob(model_id=model_id, job_type=job_type, job_params=job_params))
 
 
 async def queue_url(
-    session: AsyncSession, model: RagModel, source_identifier: str, url: str
+    session: AsyncSession, model_id: int, source_identifier: str, url: str
 ) -> None:
     """Queue a URL to be fetched and ingested."""
     await _upsert_pending_source(
-        session, model, source_identifier,
+        session, model_id, source_identifier,
         source_url=url, content_type="html", status="pending",
     )
-    _enqueue(session, model, "url", {"url": url, "source_identifier": source_identifier})
+    _enqueue(session, model_id, "url", {"url": url, "source_identifier": source_identifier})
 
 
 async def queue_file(
     session: AsyncSession,
-    model: RagModel,
+    model_id: int,
     source_identifier: str,
     content_type: str,
     text: str,
@@ -92,32 +92,32 @@ async def queue_file(
 ) -> None:
     """Queue already-extracted text to be chunked and embedded."""
     await _upsert_pending_source(
-        session, model, source_identifier,
+        session, model_id, source_identifier,
         source_url=source_url, content_type=content_type, status="pending", raw_content=text,
     )
     params = {"source_identifier": source_identifier, "content_type": content_type}
     if parent_job_id is not None:
         params["parent_job_id"] = parent_job_id
-    _enqueue(session, model, "file", params)
+    _enqueue(session, model_id, "file", params)
 
 
 async def queue_r2_file(
-    session: AsyncSession, model: RagModel, filename: str, object_key: str
+    session: AsyncSession, model_id: int, filename: str, object_key: str
 ) -> None:
     """Queue an uploaded object to be downloaded from R2 and ingested.
 
     The content type isn't known until the worker downloads and inspects it.
     """
     await _upsert_pending_source(
-        session, model, filename,
+        session, model_id, filename,
         source_url="", content_type="pending", status="pending",
     )
-    _enqueue(session, model, "r2_file", {"object_key": object_key, "filename": filename})
+    _enqueue(session, model_id, "r2_file", {"object_key": object_key, "filename": filename})
 
 
 async def queue_crawl(
     session: AsyncSession,
-    model: RagModel,
+    model_id: int,
     root_url: str,
     *,
     max_pages: int,
@@ -131,10 +131,10 @@ async def queue_crawl(
     rather than `pending`.
     """
     await _upsert_pending_source(
-        session, model, root_url,
+        session, model_id, root_url,
         source_url=root_url, content_type="html", status="crawling",
     )
-    _enqueue(session, model, "crawl", {
+    _enqueue(session, model_id, "crawl", {
         "url": root_url,
         "max_pages": max_pages,
         "max_depth": max_depth,

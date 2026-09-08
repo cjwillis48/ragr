@@ -292,7 +292,7 @@ async def create_source(
     results = []
 
     for url, source_id in zip(urls, source_ids):
-        await queue_url(session, model, source_id, url)
+        await queue_url(session, model.id, source_id, url)
         results.append(CreateSourceResponse(
             source_identifier=source_id,
             status="pending",
@@ -364,7 +364,7 @@ async def upload_source(
 
     t_db = time.monotonic()
     for filename, text, content_type in prepared_files:
-        await queue_file(session, model, filename, content_type, text)
+        await queue_file(session, model.id, filename, content_type, text)
         results.append(CreateSourceResponse(
             source_identifier=filename,
             status="pending",
@@ -438,7 +438,7 @@ async def confirm_upload(
         if not f.object_key.startswith(f"uploads/{model.id}/"):
             raise HTTPException(status_code=403, detail=f"Object key does not belong to this model: {f.object_key}")
 
-        await queue_r2_file(session, model, f.filename, f.object_key)
+        await queue_r2_file(session, model.id, f.filename, f.object_key)
         results.append(CreateSourceResponse(
             source_identifier=f.filename,
             status="pending",
@@ -476,7 +476,7 @@ async def crawl_site_endpoint(
 
     # Recorded as crawling immediately so the UI shows activity
     await queue_crawl(
-        session, model, crawl_root,
+        session, model.id, crawl_root,
         max_pages=body.max_pages,
         max_depth=body.max_depth,
         prefix=body.prefix,
