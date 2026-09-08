@@ -35,7 +35,13 @@ from app.schemas.sources import (
 )
 from app.services.crawler import normalize_url
 from app.services.extract import ExtractionError, extract_text
-from app.services.ingest import ingest_content
+from app.services.ingest import (
+    ingest_content,
+    queue_crawl,
+    queue_file,
+    queue_r2_file,
+    queue_url,
+)
 from app.services.r2 import is_configured as r2_is_configured
 from app.services.rate_limit import RateLimiter
 from app.services.url_validation import SSRFError, validate_url
@@ -283,38 +289,10 @@ async def create_source(
     urls = url_list
     source_ids = list(urls) if has_urls else [body.source_identifier or body.url]
 
-    # Single query to find all existing sources
-    existing_result = await session.execute(
-        select(IngestionSource).where(
-            IngestionSource.model_id == model.id,
-            IngestionSource.source_identifier.in_(source_ids),
-        )
-    )
-    existing_map = {s.source_identifier: s for s in existing_result.scalars().all()}
-
     results = []
-    task_args = []
 
     for url, source_id in zip(urls, source_ids):
-        existing = existing_map.get(source_id)
-        if existing:
-            existing.status = "pending"
-        else:
-            session.add(IngestionSource(
-                model_id=model.id,
-                source_identifier=source_id,
-                content_hash="",
-                chunk_count=0,
-                source_url=url,
-                content_type="html",
-                status="pending",
-            ))
-
-        session.add(IngestionJob(
-            model_id=model.id,
-            job_type="url",
-            job_params={"url": url, "source_identifier": source_id},
-        ))
+        await queue_url(session, model.id, source_id, url)
         results.append(CreateSourceResponse(
             source_identifier=source_id,
             status="pending",
@@ -386,33 +364,7 @@ async def upload_source(
 
     t_db = time.monotonic()
     for filename, text, content_type in prepared_files:
-        src_result = await session.execute(
-            select(IngestionSource).where(
-                IngestionSource.model_id == model.id,
-                IngestionSource.source_identifier == filename,
-            )
-        )
-        existing = src_result.scalar_one_or_none()
-        if existing:
-            existing.status = "pending"
-            existing.raw_content = text
-        else:
-            session.add(IngestionSource(
-                model_id=model.id,
-                source_identifier=filename,
-                content_hash="",
-                chunk_count=0,
-                source_url="",
-                content_type=content_type,
-                status="pending",
-                raw_content=text,
-            ))
-
-        session.add(IngestionJob(
-            model_id=model.id,
-            job_type="file",
-            job_params={"source_identifier": filename, "content_type": content_type},
-        ))
+        await queue_file(session, model.id, filename, content_type, text)
         results.append(CreateSourceResponse(
             source_identifier=filename,
             status="pending",
@@ -486,31 +438,7 @@ async def confirm_upload(
         if not f.object_key.startswith(f"uploads/{model.id}/"):
             raise HTTPException(status_code=403, detail=f"Object key does not belong to this model: {f.object_key}")
 
-        src_result = await session.execute(
-            select(IngestionSource).where(
-                IngestionSource.model_id == model.id,
-                IngestionSource.source_identifier == f.filename,
-            )
-        )
-        existing = src_result.scalar_one_or_none()
-        if existing:
-            existing.status = "pending"
-        else:
-            session.add(IngestionSource(
-                model_id=model.id,
-                source_identifier=f.filename,
-                content_hash="",
-                chunk_count=0,
-                source_url="",
-                content_type="pending",
-                status="pending",
-            ))
-
-        session.add(IngestionJob(
-            model_id=model.id,
-            job_type="r2_file",
-            job_params={"object_key": f.object_key, "filename": f.filename},
-        ))
+        await queue_r2_file(session, model.id, f.filename, f.object_key)
         results.append(CreateSourceResponse(
             source_identifier=f.filename,
             status="pending",
@@ -546,37 +474,14 @@ async def crawl_site_endpoint(
     # Otherwise `https://x.com` and `https://x.com/` create two rows.
     crawl_root = normalize_url(body.url)
 
-    # Create a crawling source immediately so the UI shows activity
-    existing = await session.execute(
-        select(IngestionSource).where(
-            IngestionSource.model_id == model.id,
-            IngestionSource.source_identifier == crawl_root,
-        )
+    # Recorded as crawling immediately so the UI shows activity
+    await queue_crawl(
+        session, model.id, crawl_root,
+        max_pages=body.max_pages,
+        max_depth=body.max_depth,
+        prefix=body.prefix,
+        exclude_patterns=body.exclude_patterns,
     )
-    src = existing.scalar_one_or_none()
-    if src:
-        src.status = "crawling"
-    else:
-        session.add(IngestionSource(
-            model_id=model.id,
-            source_identifier=crawl_root,
-            content_hash="",
-            chunk_count=0,
-            source_url=crawl_root,
-            content_type="html",
-            status="crawling",
-        ))
-    session.add(IngestionJob(
-        model_id=model.id,
-        job_type="crawl",
-        job_params={
-            "url": crawl_root,
-            "max_pages": body.max_pages,
-            "max_depth": body.max_depth,
-            "prefix": body.prefix,
-            "exclude_patterns": body.exclude_patterns,
-        },
-    ))
     await session.commit()
 
     return CrawlResponse(

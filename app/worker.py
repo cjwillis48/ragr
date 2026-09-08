@@ -22,7 +22,7 @@ from app.models.rag_model import RagModel
 from app.services.extract import extract_text
 from app.services.html import strip_html
 from app.logging_setup import configure_logging
-from app.services.ingest import ingest_content
+from app.services.ingest import ingest_content, queue_file
 from app.telemetry import setup_tracing, tracer
 from app.tenancy import tenant_scope
 import app.services.wikipedia as wikipedia_module
@@ -288,33 +288,13 @@ async def handle_crawl_job(job: IngestionJob) -> None:
                 seed_reason, seed_detail = item.reason, item.detail
             continue
 
-        # CrawledPage — create pending source + child URL job
+        # CrawledPage — queue it for ingestion as a child of this crawl
         page_count += 1
         async with db.async_session() as session:
-            existing = await session.execute(
-                select(IngestionSource).where(
-                    IngestionSource.model_id == model_id,
-                    IngestionSource.source_identifier == item.url,
-                )
+            await queue_file(
+                session, model_id, item.url, item.content_type, item.text,
+                source_url=item.url, parent_job_id=job.id,
             )
-            src = existing.scalar_one_or_none()
-            if src:
-                src.status = "pending"
-                src.raw_content = item.text
-            else:
-                session.add(IngestionSource(
-                    model_id=model_id, source_identifier=item.url,
-                    content_hash="", chunk_count=0, source_url=item.url,
-                    content_type=item.content_type, status="pending",
-                    raw_content=item.text,
-                ))
-
-            # Create a child job for ingesting this page
-            session.add(IngestionJob(
-                model_id=model_id,
-                job_type="file",
-                job_params={"source_identifier": item.url, "content_type": item.content_type, "parent_job_id": job.id},
-            ))
             await session.commit()
 
     # Flip root URL from "crawling" to final status
