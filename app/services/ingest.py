@@ -9,6 +9,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.content import ContentChunk
+from app.models.ingestion_job import IngestionJob
 from app.models.ingestion_source import IngestionSource
 from app.models.rag_model import RagModel
 from app.services.budget import estimate_embedding_cost
@@ -29,6 +30,117 @@ class IngestResult:
     chunk_ms: int = 0
     embed_ms: int = 0
     db_ms: int = 0
+
+
+async def _upsert_pending_source(
+    session: AsyncSession,
+    model: RagModel,
+    source_identifier: str,
+    *,
+    source_url: str,
+    content_type: str,
+    status: str,
+    raw_content: str | None = None,
+) -> None:
+    """Record that a Source is about to be ingested, creating it if it's new.
+
+    Only the status (and stored text, when supplied) is overwritten on an
+    existing Source: content_hash and chunk_count belong to the last completed
+    ingest and must survive until this one finishes, or a failed re-ingest would
+    report a Source with no content.
+    """
+    stmt = pg_insert(IngestionSource).values(
+        model_id=model.id,
+        source_identifier=source_identifier,
+        content_hash="",
+        chunk_count=0,
+        source_url=source_url,
+        content_type=content_type,
+        status=status,
+        raw_content=raw_content,
+    )
+    updates = {"status": stmt.excluded.status}
+    if raw_content is not None:
+        updates["raw_content"] = stmt.excluded.raw_content
+    await session.execute(stmt.on_conflict_do_update(constraint="uq_model_source", set_=updates))
+
+
+def _enqueue(session: AsyncSession, model: RagModel, job_type: str, job_params: dict) -> None:
+    session.add(IngestionJob(model_id=model.id, job_type=job_type, job_params=job_params))
+
+
+async def queue_url(
+    session: AsyncSession, model: RagModel, source_identifier: str, url: str
+) -> None:
+    """Queue a URL to be fetched and ingested."""
+    await _upsert_pending_source(
+        session, model, source_identifier,
+        source_url=url, content_type="html", status="pending",
+    )
+    _enqueue(session, model, "url", {"url": url, "source_identifier": source_identifier})
+
+
+async def queue_file(
+    session: AsyncSession,
+    model: RagModel,
+    source_identifier: str,
+    content_type: str,
+    text: str,
+    *,
+    source_url: str = "",
+    parent_job_id: int | None = None,
+) -> None:
+    """Queue already-extracted text to be chunked and embedded."""
+    await _upsert_pending_source(
+        session, model, source_identifier,
+        source_url=source_url, content_type=content_type, status="pending", raw_content=text,
+    )
+    params = {"source_identifier": source_identifier, "content_type": content_type}
+    if parent_job_id is not None:
+        params["parent_job_id"] = parent_job_id
+    _enqueue(session, model, "file", params)
+
+
+async def queue_r2_file(
+    session: AsyncSession, model: RagModel, filename: str, object_key: str
+) -> None:
+    """Queue an uploaded object to be downloaded from R2 and ingested.
+
+    The content type isn't known until the worker downloads and inspects it.
+    """
+    await _upsert_pending_source(
+        session, model, filename,
+        source_url="", content_type="pending", status="pending",
+    )
+    _enqueue(session, model, "r2_file", {"object_key": object_key, "filename": filename})
+
+
+async def queue_crawl(
+    session: AsyncSession,
+    model: RagModel,
+    root_url: str,
+    *,
+    max_pages: int,
+    max_depth: int,
+    prefix: str | None,
+    exclude_patterns: list[str] | None,
+) -> None:
+    """Queue a site crawl, whose pages are queued individually as they're found.
+
+    The root Source stands in for the crawl itself, so its status is `crawling`
+    rather than `pending`.
+    """
+    await _upsert_pending_source(
+        session, model, root_url,
+        source_url=root_url, content_type="html", status="crawling",
+    )
+    _enqueue(session, model, "crawl", {
+        "url": root_url,
+        "max_pages": max_pages,
+        "max_depth": max_depth,
+        "prefix": prefix,
+        "exclude_patterns": exclude_patterns,
+    })
 
 
 async def _record_empty_source(
